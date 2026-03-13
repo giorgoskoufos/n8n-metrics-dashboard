@@ -4,12 +4,12 @@ const { Pool } = require('pg');
 const path = require('path');
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.DASHBOARD_PORT || 3000;
 
 // Dynamic db conneciton depending on the enviroment the app is hosted
 let poolConfig = {};
 
-if (process.env.DATABASE_URL) {
+if (process.env.DASHBOARD_DATABASE_URL) {
     // Option Α: Server / Easypanel (Internal URL)
     console.log("Connecting to DB using DATABASE_URL...");
     poolConfig = {
@@ -19,11 +19,11 @@ if (process.env.DATABASE_URL) {
     // Option Β: Local / External connection
     console.log("Connecting to DB using individual credentials...");
     poolConfig = {
-        user: process.env.DB_USER,
-        host: process.env.DB_HOST,
-        database: process.env.DB_NAME,
-        password: process.env.DB_PASS,
-        port: process.env.DB_PORT,
+        user: process.env.DASHBOARD_DB_USER,
+        host: process.env.DASHBOARD_DB_HOST,
+        database: process.env.DASHBOARD_DB_NAME,
+        password: process.env.DASHBOARD_DB_PASS,
+        port: process.env.DASHBOARD_DB_PORT,
     };
 }
 
