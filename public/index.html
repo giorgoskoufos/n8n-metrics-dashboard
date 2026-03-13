@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>n8n Metrics Monitor</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Open Sans"', 'sans-serif'],
+                    },
+                    colors: {
+                        n8n: { 
+                            dark: '#171717',
+                            card: '#222222',
+                            primary: '#ff6f5c',
+                            success: '#278250',
+                            danger: '#f16a75',
+                            text: '#eeeeee'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #171717; color: #eeeeee; font-family: 'Open Sans', sans-serif; }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="flex justify-between items-center mb-8">
+        <div class="flex items-center gap-3">
+            <div class="bg-n8n-primary text-white font-bold py-1 px-2 rounded">n8n</div>
+            <h1 class="text-2xl font-semibold text-white">Metrics Monitor</h1>
+        </div>
+        <button onclick="refreshData()" class="bg-n8n-primary hover:bg-orange-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+            <span>Refresh Data</span>
+        </button>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div class="bg-n8n-card p-6 rounded-xl border border-gray-700">
+            <div class="text-sm text-n8n-text mb-1">Prod. executions (7d)</div>
+            <div class="text-3xl font-bold text-white" id="kpi-total">--</div>
+        </div>
+        <div class="bg-n8n-card p-6 rounded-xl border border-gray-700">
+            <div class="text-sm text-n8n-text mb-1">Failed prod. executions</div>
+            <div class="text-3xl font-bold text-white" id="kpi-failed">--</div>
+        </div>
+        <div class="bg-n8n-card p-6 rounded-xl border border-gray-700">
+            <div class="text-sm text-n8n-text mb-1">Failure rate</div>
+            <div class="text-3xl font-bold text-white" id="kpi-error-rate">--</div>
+        </div>
+        <div class="bg-n8n-card p-6 rounded-xl border border-gray-700">
+            <div class="text-sm text-n8n-text mb-1">Run time (avg.)</div>
+            <div class="text-3xl font-bold text-white" id="kpi-time">--</div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+        <div class="lg:col-span-2 bg-n8n-card p-6 rounded-xl border border-gray-700">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-white font-semibold">Executions — Last 24 Hours</h2>
+                <select id="workflowFilter" onchange="refreshData()" class="bg-[#171717] text-n8n-text text-sm rounded-lg px-3 py-1.5 border border-gray-700 focus:outline-none focus:border-n8n-primary max-w-[200px] md:max-w-xs truncate">
+                    <option value="">All Workflows</option>
+                </select>
+            </div>
+            <canvas id="lineChart" height="100"></canvas>
+        </div>
+        <div class="bg-n8n-card p-6 rounded-xl border border-gray-700">
+            <h2 class="text-white font-semibold mb-4 text-center">Execution Volume (Top 90%)</h2>
+            <div class="relative h-64 flex justify-center items-center">
+                <canvas id="doughnutChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="bg-n8n-card rounded-xl border border-gray-700 overflow-hidden">
+        <div class="p-4 border-b border-gray-700 flex gap-4 text-sm font-medium text-n8n-text">
+            <span class="text-n8n-primary border-b-2 border-n8n-primary pb-4 -mb-4">Executions</span>
+        </div>
+        <div class="overflow-y-auto" style="max-height: 500px;" id="table-scroll-container">
+            <table class="w-full text-left border-collapse">
+                <thead class="sticky top-0 bg-n8n-card z-10 border-b border-gray-700">
+                    <tr class="text-n8n-text text-sm">
+                        <th class="p-4 font-medium">Workflow</th>
+                        <th class="p-4 font-medium">Status</th>
+                        <th class="p-4 font-medium">Started</th>
+                        <th class="p-4 font-medium">Run Time</th>
+                        <th class="p-4 font-medium">Exec. ID</th>
+                    </tr>
+                </thead>
+                <tbody id="table-body" class="divide-y divide-gray-700">
+                </tbody>
+            </table>
+            <div id="scroll-trigger" class="h-10 w-full flex justify-center items-center text-gray-500 text-sm">Loading more...</div>
+        </div>
+    </div>
+
+    <script src="logic/app.js"></script>
+</body>
+</html>
