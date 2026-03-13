@@ -13,7 +13,7 @@ if (process.env.DASHBOARD_DATABASE_URL) {
     // Option Α: Server / Easypanel (Internal URL)
     console.log("Connecting to DB using DATABASE_URL...");
     poolConfig = {
-        connectionString: process.env.DATABASE_URL,
+        connectionString: process.env.DASHBOARD_DATABASE_URL,
     };
 } else {
     // Option Β: Local / External connection
