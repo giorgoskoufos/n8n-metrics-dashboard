@@ -8,7 +8,6 @@ let doughnutChart = null;
 Chart.defaults.font.family = "'Open Sans', sans-serif";
 Chart.defaults.color = '#eeeeee';
 
-// Table Pagination State
 let currentOffset = 0;
 const LIMIT = 20;
 let isFetchingExecutions = false;
@@ -29,14 +28,8 @@ function initCharts() {
             responsive: true, 
             plugins: { legend: { display: false } }, 
             scales: { 
-                y: { grid: { color: '#333' } }, 
-                x: { 
-                    grid: { color: '#333', display: false },
-                    ticks: { 
-                        maxTicksLimit: 6,
-                        maxRotation: 0    
-                    } 
-                } 
+                y: { grid: { color: '#333' }, min: 0 }, 
+                x: { grid: { color: '#333', display: false }, ticks: { maxTicksLimit: 8, maxRotation: 0 } } 
             } 
         }
     });
@@ -44,21 +37,22 @@ function initCharts() {
     const ctxDoughnut = document.getElementById('doughnutChart').getContext('2d');
     doughnutChart = new Chart(ctxDoughnut, {
         type: 'doughnut',
-        data: {
-            labels: [],
-            datasets: [{ data: [], borderWidth: 0, cutout: '75%' }]
-        },
+        data: { labels: [], datasets: [{ data: [], borderWidth: 0, cutout: '75%' }] },
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
     });
 }
 
-// --- SECTION 3: DATA FETCHING ---
+// --- SECTION 3: DATA FETCHING (Εδώ ενώνονται αρμονικά τα 2 φίλτρα) ---
 async function fetchMetricsData() {
-    // Read the selected workflow from the dropdown (if any)
     const wfFilter = document.getElementById('workflowFilter')?.value || '';
-    const url = wfFilter ? `/api/metrics?workflow=${encodeURIComponent(wfFilter)}` : '/api/metrics';
+    const timeFilter = document.getElementById('timeRangeFilter')?.value || '24h';
     
-    const response = await fetch(url);
+    // Το URLSearchParams διασφαλίζει ότι και τα 2 φίλτρα στέλνονται μαζί χωρίς conflicts
+    const params = new URLSearchParams();
+    if (wfFilter) params.append('workflow', wfFilter);
+    if (timeFilter) params.append('timeRange', timeFilter);
+    
+    const response = await fetch(`/api/metrics?${params.toString()}`);
     return response.ok ? await response.json() : null;
 }
 
@@ -70,11 +64,8 @@ async function fetchExecutions(offset, limit) {
 // --- SECTION 4: UI UPDATERS ---
 function updateKpiCards(summary) {
     if (!summary) return;
-
     const total = parseInt(summary.total) || 0;
     const errors = parseInt(summary.error) || 0;
-    const success = total - errors;
-
     const errorRate = total > 0 ? ((errors / total) * 100).toFixed(1) : 0;
     const avgTime = parseFloat(summary.avg_duration || 0).toFixed(2);
 
@@ -84,16 +75,35 @@ function updateKpiCards(summary) {
     document.getElementById('kpi-time').innerText = avgTime + 's';
 }
 
-function updateLineChart(hourlyData) {
-    if (!hourlyData || hourlyData.length === 0) return;
+function updateLineChart(chartData) {
+    if (!chartData || chartData.length === 0) return;
 
+    const timeFilter = document.getElementById('timeRangeFilter')?.value || '24h';
     const labels = [];
     const successData = [];
     const errorData = [];
 
-    hourlyData.forEach(row => {
-        const hours = new Date(row.hour).getHours().toString().padStart(2, '0');
-        labels.push(`${hours}:00`);
+    chartData.forEach(row => {
+        // Διαβάζουμε σωστά το κείμενο της ημερομηνίας που έστειλε η βάση (όχι πια NaN!)
+        const dateObj = new Date(row.time_val); 
+        let label = '';
+
+        if (!isNaN(dateObj.getTime())) {
+            if (timeFilter === '7d') {
+                label = dateObj.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' });
+            } else if (timeFilter === '48h') {
+                const hours = dateObj.getHours().toString().padStart(2, '0');
+                const day = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+                label = `${day} ${hours}:00`;
+            } else {
+                const hours = dateObj.getHours().toString().padStart(2, '0');
+                label = `${hours}:00`;
+            }
+        } else {
+            label = 'Error'; // Ασφαλής fallback αν κάτι πάει στραβά
+        }
+
+        labels.push(label);
         successData.push(parseInt(row.success_count) || 0);
         errorData.push(parseInt(row.error_count) || 0);
     });
@@ -140,10 +150,8 @@ function updateDoughnutChart(workflows) {
     doughnutChart.update();
 }
 
-// Populates the dropdown with the Top 15 workflows, avoiding an extra API call
 function populateDropdown(workflows) {
     const select = document.getElementById('workflowFilter');
-    // Only populate if it's currently empty (contains only the default "All Workflows" option)
     if (select && select.options.length <= 1 && workflows) {
         const top15 = workflows.slice(0, 15);
         top15.forEach(wf => {
@@ -215,14 +223,13 @@ async function refreshData() {
         updateLineChart(data.hourlyData);
         if (data.topWorkflows) {
             updateDoughnutChart(data.topWorkflows);
-            populateDropdown(data.topWorkflows); // Reusing data to build dropdown
+            populateDropdown(data.topWorkflows); 
         }
-        loadMoreExecutions(true); 
     }
 }
 
 window.addEventListener('DOMContentLoaded', () => {
     initCharts();
     setupInfiniteScroll();
-    refreshData(); // Fetch once and distribute to components
+    refreshData(); 
 });

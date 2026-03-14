@@ -72,10 +72,18 @@
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
         <div class="lg:col-span-2 bg-n8n-card p-6 rounded-xl border border-gray-700">
             <div class="flex justify-between items-center mb-4">
-                <h2 class="text-white font-semibold">Executions — Last 24 Hours</h2>
-                <select id="workflowFilter" onchange="refreshData()" class="bg-[#171717] text-n8n-text text-sm rounded-lg px-3 py-1.5 border border-gray-700 focus:outline-none focus:border-n8n-primary max-w-[200px] md:max-w-xs truncate">
-                    <option value="">All Workflows</option>
-                </select>
+                <h2 class="text-white font-semibold">Executions Trend</h2>
+                <div class="flex items-center gap-3">
+                    <select id="timeRangeFilter" onchange="refreshData()" class="bg-[#171717] text-n8n-text text-sm rounded-lg px-3 py-1.5 border border-gray-700 focus:outline-none focus:border-n8n-primary">
+                        <option value="24h">Last 24 Hours</option>
+                        <option value="48h">Last 48 Hours</option>
+                        <option value="7d">Last 7 Days</option>
+                    </select>
+                    
+                    <select id="workflowFilter" onchange="refreshData()" class="bg-[#171717] text-n8n-text text-sm rounded-lg px-3 py-1.5 border border-gray-700 focus:outline-none focus:border-n8n-primary max-w-[150px] md:max-w-xs truncate">
+                        <option value="">All Workflows</option>
+                    </select>
+                </div>
             </div>
             <canvas id="lineChart" height="100"></canvas>
         </div>

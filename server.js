@@ -6,12 +6,12 @@ const path = require('path');
 const app = express();
 const port = process.env.DASHBOARD_PORT || 3000;
 
-// Dynamic db conneciton depending on the enviroment the app is hosted
+// Dynamic db connection depending on the environment
 let poolConfig = {};
 
 if (process.env.DASHBOARD_DATABASE_URL) {
     // Option Α: Server / Easypanel (Internal URL)
-    console.log("Connecting to DB using DATABASE_URL...");
+    console.log("Connecting to DB using DASHBOARD_DATABASE_URL...");
     poolConfig = {
         connectionString: process.env.DASHBOARD_DATABASE_URL,
     };
@@ -28,14 +28,28 @@ if (process.env.DASHBOARD_DATABASE_URL) {
 }
 
 const pool = new Pool(poolConfig);
-
 app.use(express.static('public'));
 
-
-// 1. Endpoint για τα Metrics (Γραφήματα & KPIs) - ΠΛΕΟΝ ΔΕΧΕΤΑΙ ΦΙΛΤΡΟ!
+// 1. Endpoint για τα Metrics (Γραφήματα & KPIs)
 app.get('/api/metrics', async (req, res) => {
   try {
-    const targetWorkflow = req.query.workflow; // Διαβάζουμε το φίλτρο από το URL
+    const targetWorkflow = req.query.workflow; 
+    const timeRange = req.query.timeRange || '24h'; 
+
+    let intervalOffset = '23 hours';
+    let lookback = '24 hours';
+    let step = '1 hour';
+    let truncUnit = 'hour';
+
+    if (timeRange === '48h') {
+        intervalOffset = '47 hours';
+        lookback = '48 hours';
+    } else if (timeRange === '7d') {
+        intervalOffset = '6 days';
+        lookback = '7 days';
+        truncUnit = 'day'; 
+        step = '1 day';
+    }
 
     const statsQuery = `
       SELECT count(*) as total, count(*) FILTER (WHERE status = 'error') as error,
@@ -43,33 +57,29 @@ app.get('/api/metrics', async (req, res) => {
       FROM execution_entity WHERE "startedAt" > NOW() - INTERVAL '7 days';
     `;
 
-    let hourlyQuery;
     let hourlyParams = [];
+    if (targetWorkflow) hourlyParams.push(targetWorkflow);
 
-    if (targetWorkflow) {
-        // Αν επιλέχθηκε workflow, φιλτράρουμε το Line Chart!
-        hourlyQuery = `
-          WITH hours AS (SELECT generate_series(date_trunc('hour', NOW() - INTERVAL '23 hours'), date_trunc('hour', NOW()), '1 hour'::interval) AS hour),
-          recent_executions AS (
-              SELECT e.id, e.status, date_trunc('hour', e."startedAt") as exec_hour
-              FROM execution_entity e
-              JOIN workflow_entity w ON e."workflowId" = w.id
-              WHERE e."startedAt" > NOW() - INTERVAL '24 hours'
-              AND w.name = $1
-          )
-          SELECT h.hour, COUNT(e.id) FILTER (WHERE e.status = 'success') AS success_count, COUNT(e.id) FILTER (WHERE e.status = 'error') AS error_count
-          FROM hours h LEFT JOIN recent_executions e ON h.hour = e.exec_hour GROUP BY h.hour ORDER BY h.hour ASC;
-        `;
-        hourlyParams.push(targetWorkflow);
-    } else {
-        // Διαφορετικά τα φέρνουμε όλα
-        hourlyQuery = `
-          WITH hours AS (SELECT generate_series(date_trunc('hour', NOW() - INTERVAL '23 hours'), date_trunc('hour', NOW()), '1 hour'::interval) AS hour),
-          recent_executions AS (SELECT id, status, date_trunc('hour', "startedAt") as exec_hour FROM execution_entity WHERE "startedAt" > NOW() - INTERVAL '24 hours')
-          SELECT h.hour, COUNT(e.id) FILTER (WHERE e.status = 'success') AS success_count, COUNT(e.id) FILTER (WHERE e.status = 'error') AS error_count
-          FROM hours h LEFT JOIN recent_executions e ON h.hour = e.exec_hour GROUP BY h.hour ORDER BY h.hour ASC;
-        `;
-    }
+    // Το ::text στο t.time_point λύνει το πρόβλημα του NaN στη JavaScript!
+    const hourlyQuery = `
+      WITH time_series AS (
+          SELECT generate_series(date_trunc('${truncUnit}', NOW() - INTERVAL '${intervalOffset}'), date_trunc('${truncUnit}', NOW()), '${step}'::interval) AS time_point
+      ),
+      recent_executions AS (
+          SELECT e.id, e.status, date_trunc('${truncUnit}', e."startedAt") as exec_time
+          FROM execution_entity e
+          ${targetWorkflow ? 'JOIN workflow_entity w ON e."workflowId" = w.id' : ''}
+          WHERE e."startedAt" > NOW() - INTERVAL '${lookback}'
+          ${targetWorkflow ? 'AND w.name = $1' : ''}
+      )
+      SELECT t.time_point::text as time_val, 
+             COUNT(e.id) FILTER (WHERE e.status = 'success') AS success_count, 
+             COUNT(e.id) FILTER (WHERE e.status = 'error') AS error_count
+      FROM time_series t 
+      LEFT JOIN recent_executions e ON t.time_point = e.exec_time 
+      GROUP BY t.time_point 
+      ORDER BY t.time_point ASC;
+    `;
 
     const topWorkflowsQuery = `
       SELECT w.name AS workflow_name, COUNT(e.id) AS execution_count,
@@ -83,7 +93,7 @@ app.get('/api/metrics', async (req, res) => {
 
     const [stats, hourly, topWorkflows] = await Promise.all([
         pool.query(statsQuery),
-        pool.query(hourlyQuery, hourlyParams), // Περνάμε το φίλτρο
+        pool.query(hourlyQuery, hourlyParams), 
         pool.query(topWorkflowsQuery)
     ]);
 
@@ -114,6 +124,52 @@ app.get('/api/executions', async (req, res) => {
             LIMIT $1 OFFSET $2;
         `;
         const result = await pool.query(query, [limit, offset]);
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Database error' });
+    }
+});
+
+// 3. Analytics: Top 10 Slowest Workflows (Last 7 Days)
+app.get('/api/analytics/slowest', async (req, res) => {
+    try {
+        const query = `
+            SELECT w.name, 
+                   AVG(EXTRACT(EPOCH FROM (e."stoppedAt" - e."startedAt"))) as avg_duration,
+                   COUNT(e.id) as total_runs
+            FROM execution_entity e
+            JOIN workflow_entity w ON e."workflowId" = w.id
+            WHERE e."startedAt" > NOW() - INTERVAL '7 days' 
+              AND e."stoppedAt" IS NOT NULL
+            GROUP BY w.id, w.name
+            ORDER BY avg_duration DESC
+            LIMIT 10;
+        `;
+        const result = await pool.query(query);
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Database error' });
+    }
+});
+
+// 4. Analytics: Top 10 Error Hotspots (Last 7 Days)
+app.get('/api/analytics/errors', async (req, res) => {
+    try {
+        const query = `
+            SELECT w.name, 
+                   COUNT(e.id) FILTER (WHERE e.status = 'error') as error_count,
+                   COUNT(e.id) as total_runs
+            FROM execution_entity e
+            JOIN workflow_entity w ON e."workflowId" = w.id
+            WHERE e."startedAt" > NOW() - INTERVAL '7 days'
+            GROUP BY w.id, w.name
+            HAVING COUNT(e.id) FILTER (WHERE e.status = 'error') > 0
+            ORDER BY error_count DESC
+            LIMIT 10;
+        `;
+        const result = await pool.query(query);
         res.json(result.rows);
     } catch (err) {
         console.error(err);
