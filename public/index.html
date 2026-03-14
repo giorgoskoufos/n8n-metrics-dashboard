@@ -1,130 +1,106 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="el">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>n8n Metrics Monitor</title>
-    
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    
     <script>
         tailwind.config = {
             theme: {
                 extend: {
-                    fontFamily: {
-                        sans: ['"Open Sans"', 'sans-serif'],
-                    },
+                    fontFamily: { sans: ['"Open Sans"', 'sans-serif'] },
                     colors: {
-                        n8n: { 
-                            dark: '#171717',
-                            card: '#222222',
-                            primary: '#ff6f5c',
-                            success: '#278250',
-                            danger: '#f16a75',
-                            text: '#eeeeee'
-                        }
+                        n8n: { dark: '#171717', card: '#222222', primary: '#ff6f5c', success: '#278250', danger: '#f16a75', text: '#eeeeee' }
                     }
                 }
             }
         }
     </script>
     <style>
-        body { background-color: #171717; color: #eeeeee; font-family: 'Open Sans', sans-serif; }
+        body { background-color: #171717; color: #eeeeee; }
+        .status-success { background-color: rgba(39, 130, 80, 0.2); color: #4ade80; }
+        .status-error { background-color: rgba(241, 106, 117, 0.2); color: #f87171; }
+        .tab-btn.active { border-bottom: 2px solid #ff6f5c; color: #ff6f5c; }
     </style>
 </head>
 <body class="p-4 md:p-8">
+    <div class="max-w-7xl mx-auto">
+        <header class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+            <div>
+                <h1 class="text-2xl font-bold text-white">n8n Dashboard</h1>
+                <p class="text-gray-400">Real-time workflow analytics</p>
+            </div>
+            <div class="flex gap-3">
+                <input type="text" id="workflowSearch" placeholder="Search workflow..." class="bg-n8n-card border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-n8n-primary w-64">
+                <select id="timeRange" class="bg-n8n-card border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-n8n-primary">
+                    <option value="24h">Last 24h</option>
+                    <option value="48h">Last 48h</option>
+                    <option value="7d">Last 7 Days</option>
+                </select>
+            </div>
+        </header>
 
-    <div class="flex justify-between items-center mb-8">
-        <div class="flex items-center gap-3">
-            <div class="bg-n8n-primary text-white font-bold py-1 px-2 rounded">n8n</div>
-            <h1 class="text-2xl font-semibold text-white">Metrics Monitor</h1>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-n8n-card p-6 rounded-xl border border-gray-800">
+                <p class="text-gray-400 text-sm mb-1">Total Executions</p>
+                <h2 id="totalExecutions" class="text-3xl font-bold text-white">0</h2>
+            </div>
+            <div class="bg-n8n-card p-6 rounded-xl border border-gray-800">
+                <p class="text-gray-400 text-sm mb-1">Errors</p>
+                <h2 id="errorCount" class="text-3xl font-bold text-n8n-danger">0</h2>
+            </div>
+            <div class="bg-n8n-card p-6 rounded-xl border border-gray-800">
+                <p class="text-gray-400 text-sm mb-1">Avg. Duration</p>
+                <h2 id="avgDuration" class="text-3xl font-bold text-n8n-primary">0s</h2>
+            </div>
         </div>
-        <button onclick="refreshData()" class="bg-n8n-primary hover:bg-orange-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-            <span>Refresh Data</span>
-        </button>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            <div class="lg:col-span-2 bg-n8n-card p-6 rounded-xl border border-gray-800 h-80">
+                <canvas id="lineChart"></canvas>
+            </div>
+            <div class="bg-n8n-card p-6 rounded-xl border border-gray-800 h-80 flex flex-col">
+                <h3 class="text-sm font-semibold mb-4 text-gray-400">Top Workflows</h3>
+                <div class="flex-1 relative"><canvas id="doughnutChart"></canvas></div>
+                <div id="doughnutLegend" class="mt-4 space-y-2"></div>
+            </div>
+        </div>
+
+        <div class="bg-n8n-card rounded-xl border border-gray-800 overflow-hidden">
+            <div class="flex border-b border-gray-800">
+                <button onclick="switchTab('executions')" class="tab-btn active px-6 py-4 text-sm font-medium">Executions</button>
+                <button onclick="switchTab('slowest')" class="tab-btn px-6 py-4 text-sm font-medium">Slowest (7d)</button>
+                <button onclick="switchTab('errors')" class="tab-btn px-6 py-4 text-sm font-medium">Error Hotspots</button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                    <thead id="tableHeader" class="bg-black/20">
+                        <tr class="text-gray-400 text-sm"><th class="p-4">ID</th><th class="p-4">Workflow</th><th class="p-4">Status</th><th class="p-4">Time</th><th class="p-4">Duration</th></tr>
+                    </thead>
+                    <tbody id="executionsTableBody"></tbody>
+                </table>
+                <div id="scrollTrigger" class="h-10"></div>
+            </div>
+        </div>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        <div class="bg-n8n-card p-6 rounded-xl border border-gray-700">
-            <div class="text-sm text-n8n-text mb-1">Prod. executions (7d)</div>
-            <div class="text-3xl font-bold text-white" id="kpi-total">--</div>
-        </div>
-        <div class="bg-n8n-card p-6 rounded-xl border border-gray-700">
-            <div class="text-sm text-n8n-text mb-1">Failed prod. executions</div>
-            <div class="text-3xl font-bold text-white" id="kpi-failed">--</div>
-        </div>
-        <div class="bg-n8n-card p-6 rounded-xl border border-gray-700">
-            <div class="text-sm text-n8n-text mb-1">Failure rate</div>
-            <div class="text-3xl font-bold text-white" id="kpi-error-rate">--</div>
-        </div>
-        <div class="bg-n8n-card p-6 rounded-xl border border-gray-700">
-            <div class="text-sm text-n8n-text mb-1">Run time (avg.)</div>
-            <div class="text-3xl font-bold text-white" id="kpi-time">--</div>
-        </div>
-    </div>
-
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-        <div class="lg:col-span-2 bg-n8n-card p-6 rounded-xl border border-gray-700">
-            <div class="flex justify-between items-center mb-4">
-                <h2 class="text-white font-semibold">Executions Trend</h2>
-                <div class="flex items-center gap-3">
-                    <select id="timeRangeFilter" onchange="refreshData()" class="bg-[#171717] text-n8n-text text-sm rounded-lg px-3 py-1.5 border border-gray-700 focus:outline-none focus:border-n8n-primary">
-                        <option value="24h">Last 24 Hours</option>
-                        <option value="48h">Last 48 Hours</option>
-                        <option value="7d">Last 7 Days</option>
-                    </select>
-                    
-                    <select id="workflowFilter" onchange="refreshData()" class="bg-[#171717] text-n8n-text text-sm rounded-lg px-3 py-1.5 border border-gray-700 focus:outline-none focus:border-n8n-primary max-w-[150px] md:max-w-xs truncate">
-                        <option value="">All Workflows</option>
-                    </select>
+    <div id="errorModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <div class="bg-n8n-card border border-gray-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
+            <div class="p-6 border-b border-gray-800 flex justify-between items-center">
+                <h3 class="text-xl font-bold text-n8n-danger">Error Details</h3>
+                <button onclick="closeErrorModal()" class="text-gray-400 hover:text-white text-3xl font-bold leading-none">&times;</button>
+            </div>
+            <div class="p-6">
+                <p class="text-sm text-gray-400 mb-4">Execution ID: <span id="modalExecId" class="text-white font-mono"></span></p>
+                <div id="modalErrorMessage" class="bg-black/30 p-4 rounded-lg border border-red-900/30 text-red-400 font-mono text-sm leading-relaxed mb-6">Loading...</div>
+                <div class="flex justify-end">
+                    <a id="n8nLink" href="#" target="_blank" class="bg-[#ff6f5c] hover:bg-opacity-90 text-white px-6 py-2 rounded-lg font-bold transition-all">Open in n8n</a>
                 </div>
             </div>
-            <canvas id="lineChart" height="100"></canvas>
-        </div>
-        <div class="bg-n8n-card p-6 rounded-xl border border-gray-700">
-            <h2 class="text-white font-semibold mb-4 text-center">Execution Volume (Top 90%)</h2>
-            <div class="relative h-64 flex justify-center items-center">
-                <canvas id="doughnutChart"></canvas>
-            </div>
-        </div>
-    </div>
-
-    <div class="bg-n8n-card rounded-xl border border-gray-700 overflow-hidden">
-        
-        <div class="p-4 border-b border-gray-700 flex gap-6 text-sm font-medium text-n8n-text" id="table-tabs">
-            <button onclick="switchTab('executions')" id="tab-executions" class="text-n8n-primary border-b-2 border-n8n-primary pb-4 -mb-4 transition-colors focus:outline-none">
-                All Executions
-            </button>
-            <button onclick="switchTab('slowest')" id="tab-slowest" class="hover:text-white pb-4 -mb-4 transition-colors border-b-2 border-transparent focus:outline-none">
-                Slowest Workflows (Top 10)
-            </button>
-            <button onclick="switchTab('errors')" id="tab-errors" class="hover:text-white pb-4 -mb-4 transition-colors border-b-2 border-transparent focus:outline-none">
-                Error Hotspots
-            </button>
-        </div>
-
-        <div class="overflow-y-auto" style="max-height: 500px;" id="table-scroll-container">
-            <table class="w-full text-left border-collapse" id="dynamic-table">
-                <thead class="sticky top-0 bg-n8n-card z-10 border-b border-gray-700" id="table-head">
-                    <tr class="text-n8n-text text-sm">
-                        <th class="p-4 font-medium">Workflow</th>
-                        <th class="p-4 font-medium">Status</th>
-                        <th class="p-4 font-medium">Started</th>
-                        <th class="p-4 font-medium">Run Time</th>
-                        <th class="p-4 font-medium">Exec. ID</th>
-                    </tr>
-                </thead>
-                <tbody id="table-body" class="divide-y divide-gray-700">
-                </tbody>
-            </table>
-            
-            <div id="scroll-trigger" class="h-10 w-full flex justify-center items-center text-gray-500 text-sm">Loading more...</div>
         </div>
     </div>
 

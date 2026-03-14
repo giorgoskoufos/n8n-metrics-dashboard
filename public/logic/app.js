@@ -70,10 +70,16 @@ function updateKpiCards(summary) {
     const errorRate = total > 0 ? ((errors / total) * 100).toFixed(1) : 0;
     const avgTime = parseFloat(summary.avg_duration || 0).toFixed(2);
 
-    document.getElementById('kpi-total').innerText = total.toLocaleString();
-    document.getElementById('kpi-failed').innerText = errors.toLocaleString();
-    document.getElementById('kpi-error-rate').innerText = errorRate + '%';
-    document.getElementById('kpi-time').innerText = avgTime + 's';
+    // Υποστηρίζει και το νέο και το παλιό HTML!
+    const elTotal = document.getElementById('kpi-total') || document.getElementById('totalExecutions');
+    const elFailed = document.getElementById('kpi-failed') || document.getElementById('errorCount');
+    const elRate = document.getElementById('kpi-error-rate'); // Μόνο στο νέο
+    const elTime = document.getElementById('kpi-time') || document.getElementById('avgDuration');
+
+    if (elTotal) elTotal.innerText = total.toLocaleString();
+    if (elFailed) elFailed.innerText = errors.toLocaleString();
+    if (elRate) elRate.innerText = errorRate + '%';
+    if (elTime) elTime.innerText = avgTime + 's';
 }
 
 function updateLineChart(chartData) {
@@ -164,6 +170,57 @@ function populateDropdown(workflows) {
     }
 }
 
+// --- SECTION 4.5: ERROR MODAL LOGIC ---
+async function showError(execId) {
+    console.log("Έγινε κλικ στο execution:", execId); // Debugging
+    const modal = document.getElementById('errorModal');
+    const msgBox = document.getElementById('modalErrorMessage');
+    const idBox = document.getElementById('modalExecId');
+    const n8nLink = document.getElementById('n8nLink');
+
+    if (!modal) {
+        alert("Λείπει το HTML του Modal από το αρχείο index.html!");
+        return;
+    }
+
+    idBox.innerText = execId;
+    msgBox.innerText = 'Φόρτωση λεπτομερειών σφάλματος...';
+    
+    // Αφαίρεση της κλάσης hidden του Tailwind
+    modal.classList.remove('hidden');
+    modal.style.display = 'flex'; 
+
+    // Link για το n8n 
+    if (n8nLink) {
+        n8nLink.href = `https://automations-n8n.xadp6y.easypanel.host/execution/${execId}`;
+    }
+
+    try {
+        const response = await fetch(`/api/execution-error/${execId}`);
+        const data = await response.json();
+        msgBox.innerText = data.message;
+    } catch (err) {
+        msgBox.innerText = 'Σφάλμα κατά την ανάκτηση των δεδομένων από τον server.';
+    }
+}
+
+// Προσθήκη συνάρτησης για το κλείσιμο
+function closeErrorModal() {
+    const modal = document.getElementById('errorModal');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.style.display = 'none';
+    }
+}
+
+// Συνδέουμε το κλικ έξω από το modal για να κλείνει
+window.addEventListener('click', (event) => {
+    const modal = document.getElementById('errorModal');
+    if (modal && event.target === modal) {
+        closeErrorModal();
+    }
+});
+
 // --- SECTION 5: INFINITE SCROLL TABLE ---
 async function loadMoreExecutions(reset = false) {
     if (currentTab !== 'executions') return;
@@ -172,25 +229,38 @@ async function loadMoreExecutions(reset = false) {
 
     if (reset) {
         currentOffset = 0;
-        document.getElementById('table-body').innerHTML = '';
+        const tbody = document.getElementById('table-body') || document.getElementById('executionsTableBody');
+        if (tbody) tbody.innerHTML = '';
     }
 
     const executions = await fetchExecutions(currentOffset, LIMIT);
     
     if (executions.length > 0) {
-        const tbody = document.getElementById('table-body');
+        // Προσθήκη του fallback ΚΑΙ εδώ, καθώς και ασφάλεια αν δεν βρει κανένα
+        const tbody = document.getElementById('table-body') || document.getElementById('executionsTableBody');
+        
+        if (!tbody) {
+            console.error("Δεν βρέθηκε το table body στο HTML!");
+            return;
+        }
         
         executions.forEach(exec => {
             const dateObj = new Date(exec.startedAt);
             const timeString = `${dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${dateObj.toLocaleTimeString('en-US', { hour12: false })}`;
             const duration = exec.duration < 1 ? Math.round(exec.duration * 1000) + 'ms' : parseFloat(exec.duration).toFixed(3) + 's';
             
-            const statusHtml = exec.status === 'success' 
+            // Ελέγχουμε αν απέτυχε με οποιονδήποτε τρόπο (όχι μόνο 'error' αλλά και 'crashed')
+            const isError = exec.status !== 'success';
+
+            const statusHtml = !isError 
                 ? `<span class="flex items-center gap-2 text-[#278250]"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg> Success</span>`
                 : `<span class="flex items-center gap-2 text-[#f16a75]"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path></svg> Error</span>`;
 
+            // ΠΡΟΣΘΗΚΗ: Κάνουμε τη γραμμή clickable αν ΔΕΝ είναι success
+            const actionAttr = isError ? `onclick="showError('${exec.exec_id}')" style="cursor: pointer;" title="Δες το σφάλμα"` : '';
+
             tbody.innerHTML += `
-                <tr class="hover:bg-gray-800/30 transition-colors text-sm">
+                <tr class="hover:bg-gray-800/30 transition-colors text-sm" ${actionAttr}>
                     <td class="p-4 text-white">${exec.name}</td>
                     <td class="p-4">${statusHtml}</td>
                     <td class="p-4 text-n8n-text">${timeString}</td>
@@ -201,7 +271,8 @@ async function loadMoreExecutions(reset = false) {
         });
         currentOffset += LIMIT; 
     } else {
-        document.getElementById('scroll-trigger').innerHTML = "No more executions.";
+        const trigger = document.getElementById('scroll-trigger');
+        if (trigger) trigger.innerHTML = "No more executions.";
     }
     
     isFetchingExecutions = false;
@@ -214,7 +285,8 @@ function setupInfiniteScroll() {
         }
     }, { root: document.getElementById('table-scroll-container'), threshold: 1.0 });
 
-    observer.observe(document.getElementById('scroll-trigger'));
+    const trigger = document.getElementById('scroll-trigger');
+    if (trigger) observer.observe(trigger);
 }
 
 // --- SECTION 6: INITIALIZATION ---
@@ -234,35 +306,55 @@ window.addEventListener('DOMContentLoaded', () => {
     initCharts();
     setupInfiniteScroll();
     refreshData(); 
+    loadMoreExecutions(true); // Φορτώνει τα executions με την πρώτη εκκίνηση
+
+    // Listeners για να ανανεώνονται τα γραφήματα όταν αλλάζεις φίλτρο
+    const timeFilter = document.getElementById('timeRangeFilter');
+    if (timeFilter) timeFilter.addEventListener('change', refreshData);
+    
+    const wfFilter = document.getElementById('workflowFilter');
+    if (wfFilter) wfFilter.addEventListener('change', refreshData);
+
+    // Λογική για το κλείσιμο του Error Modal
+    const modal = document.getElementById('errorModal');
+    const closeBtn = document.querySelector('.close-modal');
+    
+    if (closeBtn && modal) {
+        closeBtn.onclick = () => modal.style.display = 'none';
+    }
+
+    window.onclick = (event) => {
+        if (modal && event.target == modal) {
+            modal.style.display = 'none';
+        }
+    };
 });
 
 // --- SECTION 7: TAB NAVIGATION & DYNAMIC TABLES ---
-
 async function switchTab(tabName) {
     if (currentTab === tabName) return;
     currentTab = tabName;
 
-    // 1. Update Tab Styles
-    const tabs = ['executions', 'slowest', 'errors'];
-    tabs.forEach(t => {
-        const btn = document.getElementById(`tab-${t}`);
-        if (t === tabName) {
-            btn.className = "text-n8n-primary border-b-2 border-n8n-primary pb-4 -mb-4 transition-colors focus:outline-none";
-        } else {
-            btn.className = "text-n8n-text hover:text-white pb-4 -mb-4 transition-colors border-b-2 border-transparent focus:outline-none";
-        }
+    // 1. Update Tab Styles (Αφαιρεί το active από όλα και το βάζει σε αυτό που πατήθηκε)
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
     });
+    
+    const activeBtn = document.querySelector(`[onclick="switchTab('${tabName}')"]`);
+    if (activeBtn) {
+        activeBtn.classList.add('active');
+    }
 
-    // 2. Setup Table Layout & Fetch Data
-    const thead = document.getElementById('table-head');
-    const tbody = document.getElementById('table-body');
-    const scrollTrigger = document.getElementById('scroll-trigger');
+    // 2. Setup Table Layout & Fetch Data (Με δικλείδες ασφαλείας για παλιά/νέα IDs)
+    const thead = document.getElementById('table-head') || document.querySelector('thead');
+    const tbody = document.getElementById('table-body') || document.getElementById('executionsTableBody');
+    const scrollTrigger = document.getElementById('scroll-trigger') || document.getElementById('scrollTrigger');
 
-    tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-gray-500">Loading...</td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-gray-500">Loading...</td></tr>';
 
     if (tabName === 'executions') {
         // --- ALL EXECUTIONS TAB ---
-        thead.innerHTML = `
+        if (thead) thead.innerHTML = `
             <tr class="text-n8n-text text-sm">
                 <th class="p-4 font-medium">Workflow</th>
                 <th class="p-4 font-medium">Status</th>
@@ -271,37 +363,39 @@ async function switchTab(tabName) {
                 <th class="p-4 font-medium">Exec. ID</th>
             </tr>
         `;
-        scrollTrigger.style.display = 'flex'; // Enable infinite scroll
+        if (scrollTrigger) scrollTrigger.style.display = 'flex';
         loadMoreExecutions(true);
 
     } else if (tabName === 'slowest') {
         // --- SLOWEST WORKFLOWS TAB ---
-        thead.innerHTML = `
+        if (thead) thead.innerHTML = `
             <tr class="text-n8n-text text-sm">
                 <th class="p-4 font-medium">Workflow</th>
                 <th class="p-4 font-medium">Avg Run Time (7d)</th>
                 <th class="p-4 font-medium">Total Runs (7d)</th>
             </tr>
         `;
-        scrollTrigger.style.display = 'none'; // Disable infinite scroll
+        if (scrollTrigger) scrollTrigger.style.display = 'none';
         
         const res = await fetch('/api/analytics/slowest');
         const data = await res.json();
-        tbody.innerHTML = '';
-        data.forEach(row => {
-            const avgTime = parseFloat(row.avg_duration).toFixed(3) + 's';
-            tbody.innerHTML += `
-                <tr class="hover:bg-gray-800/30 transition-colors text-sm border-b border-gray-800/50">
-                    <td class="p-4 text-white">${row.name}</td>
-                    <td class="p-4 text-orange-400 font-mono">${avgTime}</td>
-                    <td class="p-4 text-n8n-text">${parseInt(row.total_runs).toLocaleString()}</td>
-                </tr>
-            `;
-        });
+        if (tbody) {
+            tbody.innerHTML = '';
+            data.forEach(row => {
+                const avgTime = parseFloat(row.avg_duration).toFixed(3) + 's';
+                tbody.innerHTML += `
+                    <tr class="hover:bg-gray-800/30 transition-colors text-sm border-b border-gray-800/50">
+                        <td class="p-4 text-white">${row.name}</td>
+                        <td class="p-4 text-orange-400 font-mono">${avgTime}</td>
+                        <td class="p-4 text-n8n-text">${parseInt(row.total_runs).toLocaleString()}</td>
+                    </tr>
+                `;
+            });
+        }
 
     } else if (tabName === 'errors') {
         // --- ERROR HOTSPOTS TAB ---
-        thead.innerHTML = `
+        if (thead) thead.innerHTML = `
             <tr class="text-n8n-text text-sm">
                 <th class="p-4 font-medium">Workflow</th>
                 <th class="p-4 font-medium">Errors (7d)</th>
@@ -309,23 +403,25 @@ async function switchTab(tabName) {
                 <th class="p-4 font-medium">Error Rate</th>
             </tr>
         `;
-        scrollTrigger.style.display = 'none'; // Disable infinite scroll
+        if (scrollTrigger) scrollTrigger.style.display = 'none'; 
         
         const res = await fetch('/api/analytics/errors');
         const data = await res.json();
-        tbody.innerHTML = '';
-        data.forEach(row => {
-            const errCount = parseInt(row.error_count);
-            const totalRuns = parseInt(row.total_runs);
-            const rate = ((errCount / totalRuns) * 100).toFixed(1) + '%';
-            tbody.innerHTML += `
-                <tr class="hover:bg-gray-800/30 transition-colors text-sm border-b border-gray-800/50">
-                    <td class="p-4 text-white">${row.name}</td>
-                    <td class="p-4 text-n8n-danger font-bold">${errCount.toLocaleString()}</td>
-                    <td class="p-4 text-n8n-text">${totalRuns.toLocaleString()}</td>
-                    <td class="p-4 text-n8n-text">${rate}</td>
-                </tr>
-            `;
-        });
+        if (tbody) {
+            tbody.innerHTML = '';
+            data.forEach(row => {
+                const errCount = parseInt(row.error_count);
+                const totalRuns = parseInt(row.total_runs);
+                const rate = ((errCount / totalRuns) * 100).toFixed(1) + '%';
+                tbody.innerHTML += `
+                    <tr class="hover:bg-gray-800/30 transition-colors text-sm border-b border-gray-800/50">
+                        <td class="p-4 text-white">${row.name}</td>
+                        <td class="p-4 text-n8n-danger font-bold">${errCount.toLocaleString()}</td>
+                        <td class="p-4 text-n8n-text">${totalRuns.toLocaleString()}</td>
+                        <td class="p-4 text-n8n-text">${rate}</td>
+                    </tr>
+                `;
+            });
+        }
     }
 }

@@ -1,4 +1,5 @@
 require('dotenv').config();
+const { parse } = require('flatted');
 const express = require('express');
 const { Pool } = require('pg');
 const path = require('path');
@@ -174,6 +175,46 @@ app.get('/api/analytics/errors', async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Database error' });
+    }
+});
+
+//4.1 Endpoint για λήψη λεπτομερειών σφάλματος
+app.get('/api/execution-error/:id', async (req, res) => {
+    try {
+        const query = 'SELECT data FROM execution_data WHERE "executionId" = $1';
+        const result = await pool.query(query, [req.params.id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'No data found' });
+        }
+
+        // Parsing με flatted
+        const fullData = parse(result.rows[0].data);
+        
+        // Σύμφωνα με το log σου, η διαδρομή είναι: resultData -> error -> description
+        let errorMessage = "Unknown error detail";
+
+        if (fullData && fullData.resultData && fullData.resultData.error) {
+            // Αυτό καλύπτει την περίπτωση που είδαμε στο terminal
+            errorMessage = fullData.resultData.error.description || fullData.resultData.error.message;
+        } else if (fullData && fullData[0]) {
+            // Backup σε περίπτωση που το flatted επιστρέψει array (συνηθισμένο στο n8n)
+            const root = fullData[0];
+            errorMessage = 
+                (root.resultData?.error?.description) || 
+                (root.resultData?.error?.message) || 
+                (root.error?.description) ||
+                (root.error?.message) ||
+                (root.message);
+        }
+
+        res.json({ 
+            executionId: req.params.id,
+            message: errorMessage || "Unknown error detail"
+        });
+    } catch (err) {
+        console.error('Parsing Error:', err);
+        res.status(500).json({ error: 'Failed to parse error data' });
     }
 });
 
