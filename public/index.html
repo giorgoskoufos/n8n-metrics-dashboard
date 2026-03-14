@@ -96,12 +96,22 @@
     </div>
 
     <div class="bg-n8n-card rounded-xl border border-gray-700 overflow-hidden">
-        <div class="p-4 border-b border-gray-700 flex gap-4 text-sm font-medium text-n8n-text">
-            <span class="text-n8n-primary border-b-2 border-n8n-primary pb-4 -mb-4">Executions</span>
+        
+        <div class="p-4 border-b border-gray-700 flex gap-6 text-sm font-medium text-n8n-text" id="table-tabs">
+            <button onclick="switchTab('executions')" id="tab-executions" class="text-n8n-primary border-b-2 border-n8n-primary pb-4 -mb-4 transition-colors focus:outline-none">
+                All Executions
+            </button>
+            <button onclick="switchTab('slowest')" id="tab-slowest" class="hover:text-white pb-4 -mb-4 transition-colors border-b-2 border-transparent focus:outline-none">
+                Slowest Workflows (Top 10)
+            </button>
+            <button onclick="switchTab('errors')" id="tab-errors" class="hover:text-white pb-4 -mb-4 transition-colors border-b-2 border-transparent focus:outline-none">
+                Error Hotspots
+            </button>
         </div>
+
         <div class="overflow-y-auto" style="max-height: 500px;" id="table-scroll-container">
-            <table class="w-full text-left border-collapse">
-                <thead class="sticky top-0 bg-n8n-card z-10 border-b border-gray-700">
+            <table class="w-full text-left border-collapse" id="dynamic-table">
+                <thead class="sticky top-0 bg-n8n-card z-10 border-b border-gray-700" id="table-head">
                     <tr class="text-n8n-text text-sm">
                         <th class="p-4 font-medium">Workflow</th>
                         <th class="p-4 font-medium">Status</th>
@@ -113,6 +123,7 @@
                 <tbody id="table-body" class="divide-y divide-gray-700">
                 </tbody>
             </table>
+            
             <div id="scroll-trigger" class="h-10 w-full flex justify-center items-center text-gray-500 text-sm">Loading more...</div>
         </div>
     </div>

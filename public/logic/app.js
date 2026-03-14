@@ -7,6 +7,7 @@ let lineChart = null;
 let doughnutChart = null;
 Chart.defaults.font.family = "'Open Sans', sans-serif";
 Chart.defaults.color = '#eeeeee';
+let currentTab = 'executions'; // Default active tab        
 
 let currentOffset = 0;
 const LIMIT = 20;
@@ -165,6 +166,7 @@ function populateDropdown(workflows) {
 
 // --- SECTION 5: INFINITE SCROLL TABLE ---
 async function loadMoreExecutions(reset = false) {
+    if (currentTab !== 'executions') return;
     if (isFetchingExecutions) return;
     isFetchingExecutions = true;
 
@@ -233,3 +235,97 @@ window.addEventListener('DOMContentLoaded', () => {
     setupInfiniteScroll();
     refreshData(); 
 });
+
+// --- SECTION 7: TAB NAVIGATION & DYNAMIC TABLES ---
+
+async function switchTab(tabName) {
+    if (currentTab === tabName) return;
+    currentTab = tabName;
+
+    // 1. Update Tab Styles
+    const tabs = ['executions', 'slowest', 'errors'];
+    tabs.forEach(t => {
+        const btn = document.getElementById(`tab-${t}`);
+        if (t === tabName) {
+            btn.className = "text-n8n-primary border-b-2 border-n8n-primary pb-4 -mb-4 transition-colors focus:outline-none";
+        } else {
+            btn.className = "text-n8n-text hover:text-white pb-4 -mb-4 transition-colors border-b-2 border-transparent focus:outline-none";
+        }
+    });
+
+    // 2. Setup Table Layout & Fetch Data
+    const thead = document.getElementById('table-head');
+    const tbody = document.getElementById('table-body');
+    const scrollTrigger = document.getElementById('scroll-trigger');
+
+    tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-gray-500">Loading...</td></tr>';
+
+    if (tabName === 'executions') {
+        // --- ALL EXECUTIONS TAB ---
+        thead.innerHTML = `
+            <tr class="text-n8n-text text-sm">
+                <th class="p-4 font-medium">Workflow</th>
+                <th class="p-4 font-medium">Status</th>
+                <th class="p-4 font-medium">Started</th>
+                <th class="p-4 font-medium">Run Time</th>
+                <th class="p-4 font-medium">Exec. ID</th>
+            </tr>
+        `;
+        scrollTrigger.style.display = 'flex'; // Enable infinite scroll
+        loadMoreExecutions(true);
+
+    } else if (tabName === 'slowest') {
+        // --- SLOWEST WORKFLOWS TAB ---
+        thead.innerHTML = `
+            <tr class="text-n8n-text text-sm">
+                <th class="p-4 font-medium">Workflow</th>
+                <th class="p-4 font-medium">Avg Run Time (7d)</th>
+                <th class="p-4 font-medium">Total Runs (7d)</th>
+            </tr>
+        `;
+        scrollTrigger.style.display = 'none'; // Disable infinite scroll
+        
+        const res = await fetch('/api/analytics/slowest');
+        const data = await res.json();
+        tbody.innerHTML = '';
+        data.forEach(row => {
+            const avgTime = parseFloat(row.avg_duration).toFixed(3) + 's';
+            tbody.innerHTML += `
+                <tr class="hover:bg-gray-800/30 transition-colors text-sm border-b border-gray-800/50">
+                    <td class="p-4 text-white">${row.name}</td>
+                    <td class="p-4 text-orange-400 font-mono">${avgTime}</td>
+                    <td class="p-4 text-n8n-text">${parseInt(row.total_runs).toLocaleString()}</td>
+                </tr>
+            `;
+        });
+
+    } else if (tabName === 'errors') {
+        // --- ERROR HOTSPOTS TAB ---
+        thead.innerHTML = `
+            <tr class="text-n8n-text text-sm">
+                <th class="p-4 font-medium">Workflow</th>
+                <th class="p-4 font-medium">Errors (7d)</th>
+                <th class="p-4 font-medium">Total Runs (7d)</th>
+                <th class="p-4 font-medium">Error Rate</th>
+            </tr>
+        `;
+        scrollTrigger.style.display = 'none'; // Disable infinite scroll
+        
+        const res = await fetch('/api/analytics/errors');
+        const data = await res.json();
+        tbody.innerHTML = '';
+        data.forEach(row => {
+            const errCount = parseInt(row.error_count);
+            const totalRuns = parseInt(row.total_runs);
+            const rate = ((errCount / totalRuns) * 100).toFixed(1) + '%';
+            tbody.innerHTML += `
+                <tr class="hover:bg-gray-800/30 transition-colors text-sm border-b border-gray-800/50">
+                    <td class="p-4 text-white">${row.name}</td>
+                    <td class="p-4 text-n8n-danger font-bold">${errCount.toLocaleString()}</td>
+                    <td class="p-4 text-n8n-text">${totalRuns.toLocaleString()}</td>
+                    <td class="p-4 text-n8n-text">${rate}</td>
+                </tr>
+            `;
+        });
+    }
+}
