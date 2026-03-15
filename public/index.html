@@ -34,14 +34,6 @@
                 <h1 class="text-2xl font-bold text-white">n8n Dashboard</h1>
                 <p class="text-gray-400">Real-time workflow analytics</p>
             </div>
-            <div class="flex gap-3">
-                <input type="text" id="workflowSearch" placeholder="Search workflow..." class="bg-n8n-card border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-n8n-primary w-64">
-                <select id="timeRange" class="bg-n8n-card border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-n8n-primary">
-                    <option value="24h">Last 24h</option>
-                    <option value="48h">Last 48h</option>
-                    <option value="7d">Last 7 Days</option>
-                </select>
-            </div>
         </header>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
@@ -60,9 +52,25 @@
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-            <div class="lg:col-span-2 bg-n8n-card p-6 rounded-xl border border-gray-800 h-80">
-                <canvas id="lineChart"></canvas>
+            <div class="lg:col-span-2 bg-n8n-card p-6 rounded-xl border border-gray-800 h-80 flex flex-col">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-2">
+                    <h3 class="text-sm font-semibold text-gray-400">Execution Timeline</h3>
+                    <div class="flex gap-2">
+                        <select id="workflowFilter" class="bg-black/30 border border-gray-700 rounded-lg px-3 py-1 text-sm focus:outline-none focus:border-n8n-primary max-w-[200px] truncate">
+                            <option value="">All Workflows</option>
+                        </select>
+                        <select id="timeRangeFilter" class="bg-black/30 border border-gray-700 rounded-lg px-3 py-1 text-sm focus:outline-none focus:border-n8n-primary">
+                            <option value="24h">Last 24h</option>
+                            <option value="48h">Last 48h</option>
+                            <option value="7d">Last 7 Days</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="flex-1 relative">
+                    <canvas id="lineChart"></canvas>
+                </div>
             </div>
+
             <div class="bg-n8n-card p-6 rounded-xl border border-gray-800 h-80 flex flex-col">
                 <h3 class="text-sm font-semibold mb-4 text-gray-400">Top Workflows</h3>
                 <div class="flex-1 relative"><canvas id="doughnutChart"></canvas></div>
@@ -83,7 +91,7 @@
                     </thead>
                     <tbody id="executionsTableBody"></tbody>
                 </table>
-                <div id="scrollTrigger" class="h-10"></div>
+                <div id="scrollTrigger" class="h-10 text-center text-gray-500 text-sm py-2"></div>
             </div>
         </div>
     </div>

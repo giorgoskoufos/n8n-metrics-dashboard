@@ -27,6 +27,7 @@ function initCharts() {
         },
         options: { 
             responsive: true, 
+            maintainAspectRatio: false,
             plugins: { legend: { display: false } }, 
             scales: { 
                 y: { grid: { color: '#333' }, min: 0 }, 
@@ -43,23 +44,32 @@ function initCharts() {
     });
 }
 
-// --- SECTION 3: DATA FETCHING (Εδώ ενώνονται αρμονικά τα 2 φίλτρα) ---
+// --- SECTION 3: DATA FETCHING ---
 async function fetchMetricsData() {
     const wfFilter = document.getElementById('workflowFilter')?.value || '';
     const timeFilter = document.getElementById('timeRangeFilter')?.value || '24h';
     
-    // Το URLSearchParams διασφαλίζει ότι και τα 2 φίλτρα στέλνονται μαζί χωρίς conflicts
     const params = new URLSearchParams();
     if (wfFilter) params.append('workflow', wfFilter);
     if (timeFilter) params.append('timeRange', timeFilter);
     
-    const response = await fetch(`/api/metrics?${params.toString()}`);
-    return response.ok ? await response.json() : null;
+    try {
+        const response = await fetch(`/api/metrics?${params.toString()}`);
+        return response.ok ? await response.json() : null;
+    } catch (err) {
+        console.error("Error fetching metrics:", err);
+        return null;
+    }
 }
 
 async function fetchExecutions(offset, limit) {
-    const response = await fetch(`/api/executions?offset=${offset}&limit=${limit}`);
-    return response.ok ? await response.json() : [];
+    try {
+        const response = await fetch(`/api/executions?offset=${offset}&limit=${limit}`);
+        return response.ok ? await response.json() : [];
+    } catch (err) {
+        console.error("Error fetching executions:", err);
+        return [];
+    }
 }
 
 // --- SECTION 4: UI UPDATERS ---
@@ -70,10 +80,9 @@ function updateKpiCards(summary) {
     const errorRate = total > 0 ? ((errors / total) * 100).toFixed(1) : 0;
     const avgTime = parseFloat(summary.avg_duration || 0).toFixed(2);
 
-    // Υποστηρίζει και το νέο και το παλιό HTML!
     const elTotal = document.getElementById('kpi-total') || document.getElementById('totalExecutions');
     const elFailed = document.getElementById('kpi-failed') || document.getElementById('errorCount');
-    const elRate = document.getElementById('kpi-error-rate'); // Μόνο στο νέο
+    const elRate = document.getElementById('kpi-error-rate');
     const elTime = document.getElementById('kpi-time') || document.getElementById('avgDuration');
 
     if (elTotal) elTotal.innerText = total.toLocaleString();
@@ -91,7 +100,6 @@ function updateLineChart(chartData) {
     const errorData = [];
 
     chartData.forEach(row => {
-        // Διαβάζουμε σωστά το κείμενο της ημερομηνίας που έστειλε η βάση (όχι πια NaN!)
         const dateObj = new Date(row.time_val); 
         let label = '';
 
@@ -107,7 +115,7 @@ function updateLineChart(chartData) {
                 label = `${hours}:00`;
             }
         } else {
-            label = 'Error'; // Ασφαλής fallback αν κάτι πάει στραβά
+            label = 'Error';
         }
 
         labels.push(label);
@@ -159,6 +167,7 @@ function updateDoughnutChart(workflows) {
 
 function populateDropdown(workflows) {
     const select = document.getElementById('workflowFilter');
+    // Γεμίζουμε μόνο αν είναι άδειο (έχει μόνο το "All Workflows")
     if (select && select.options.length <= 1 && workflows) {
         const top15 = workflows.slice(0, 15);
         top15.forEach(wf => {
@@ -172,39 +181,38 @@ function populateDropdown(workflows) {
 
 // --- SECTION 4.5: ERROR MODAL LOGIC ---
 async function showError(execId) {
-    console.log("Έγινε κλικ στο execution:", execId); // Debugging
     const modal = document.getElementById('errorModal');
     const msgBox = document.getElementById('modalErrorMessage');
     const idBox = document.getElementById('modalExecId');
     const n8nLink = document.getElementById('n8nLink');
 
-    if (!modal) {
-        alert("Λείπει το HTML του Modal από το αρχείο index.html!");
-        return;
-    }
+    if (!modal) return;
 
     idBox.innerText = execId;
     msgBox.innerText = 'Φόρτωση λεπτομερειών σφάλματος...';
     
-    // Αφαίρεση της κλάσης hidden του Tailwind
+    if (n8nLink) {
+        n8nLink.style.display = 'none'; // Κρύβουμε το link μέχρι να πάρουμε το σωστό
+    }
+
     modal.classList.remove('hidden');
     modal.style.display = 'flex'; 
-
-    // Link για το n8n 
-    if (n8nLink) {
-        n8nLink.href = `https://automations-n8n.xadp6y.easypanel.host/execution/${execId}`;
-    }
 
     try {
         const response = await fetch(`/api/execution-error/${execId}`);
         const data = await response.json();
+        
         msgBox.innerText = data.message;
+
+        if (n8nLink && data.workflowId) {
+            n8nLink.href = `https://automations-n8n.xadp6y.easypanel.host/workflow/${data.workflowId}/executions/${execId}`;
+            n8nLink.style.display = 'inline-block';
+        }
     } catch (err) {
         msgBox.innerText = 'Σφάλμα κατά την ανάκτηση των δεδομένων από τον server.';
     }
 }
 
-// Προσθήκη συνάρτησης για το κλείσιμο
 function closeErrorModal() {
     const modal = document.getElementById('errorModal');
     if (modal) {
@@ -213,7 +221,6 @@ function closeErrorModal() {
     }
 }
 
-// Συνδέουμε το κλικ έξω από το modal για να κλείνει
 window.addEventListener('click', (event) => {
     const modal = document.getElementById('errorModal');
     if (modal && event.target === modal) {
@@ -234,44 +241,40 @@ async function loadMoreExecutions(reset = false) {
     }
 
     const executions = await fetchExecutions(currentOffset, LIMIT);
+    const tbody = document.getElementById('table-body') || document.getElementById('executionsTableBody');
+    const trigger = document.getElementById('scroll-trigger') || document.getElementById('scrollTrigger');
     
+    if (!tbody) {
+        isFetchingExecutions = false;
+        return;
+    }
+
     if (executions.length > 0) {
-        // Προσθήκη του fallback ΚΑΙ εδώ, καθώς και ασφάλεια αν δεν βρει κανένα
-        const tbody = document.getElementById('table-body') || document.getElementById('executionsTableBody');
-        
-        if (!tbody) {
-            console.error("Δεν βρέθηκε το table body στο HTML!");
-            return;
-        }
-        
         executions.forEach(exec => {
             const dateObj = new Date(exec.startedAt);
             const timeString = `${dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${dateObj.toLocaleTimeString('en-US', { hour12: false })}`;
             const duration = exec.duration < 1 ? Math.round(exec.duration * 1000) + 'ms' : parseFloat(exec.duration).toFixed(3) + 's';
             
-            // Ελέγχουμε αν απέτυχε με οποιονδήποτε τρόπο (όχι μόνο 'error' αλλά και 'crashed')
             const isError = exec.status !== 'success';
 
             const statusHtml = !isError 
                 ? `<span class="flex items-center gap-2 text-[#278250]"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg> Success</span>`
                 : `<span class="flex items-center gap-2 text-[#f16a75]"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path></svg> Error</span>`;
 
-            // ΠΡΟΣΘΗΚΗ: Κάνουμε τη γραμμή clickable αν ΔΕΝ είναι success
-            const actionAttr = isError ? `onclick="showError('${exec.exec_id}')" style="cursor: pointer;" title="Δες το σφάλμα"` : '';
+            const actionAttr = isError ? `onclick="showError('${exec.exec_id}')" style="cursor: pointer;" title="View Error"` : '';
 
             tbody.innerHTML += `
-                <tr class="hover:bg-gray-800/30 transition-colors text-sm" ${actionAttr}>
+                <tr class="hover:bg-gray-800/30 transition-colors text-sm border-b border-gray-800/50" ${actionAttr}>
+                    <td class="p-4 text-gray-500 font-mono">#${exec.exec_id}</td>
                     <td class="p-4 text-white">${exec.name}</td>
                     <td class="p-4">${statusHtml}</td>
                     <td class="p-4 text-n8n-text">${timeString}</td>
                     <td class="p-4 text-n8n-text">${duration}</td>
-                    <td class="p-4 text-n8n-text">${exec.exec_id}</td>
                 </tr>
             `;
         });
         currentOffset += LIMIT; 
     } else {
-        const trigger = document.getElementById('scroll-trigger');
         if (trigger) trigger.innerHTML = "No more executions.";
     }
     
@@ -279,14 +282,21 @@ async function loadMoreExecutions(reset = false) {
 }
 
 function setupInfiniteScroll() {
+    const scrollContainer = document.querySelector('.overflow-x-auto') || document.body;
+    const trigger = document.getElementById('scrollTrigger') || document.getElementById('scroll-trigger');
+
+    if (!trigger) return;
+
     const observer = new IntersectionObserver((entries) => {
-        if (entries[0].isIntersecting) {
+        if (entries[0].isIntersecting && currentTab === 'executions' && !isFetchingExecutions) {
             loadMoreExecutions();
         }
-    }, { root: document.getElementById('table-scroll-container'), threshold: 1.0 });
+    }, { 
+        root: null, 
+        threshold: 0.1 
+    });
 
-    const trigger = document.getElementById('scroll-trigger');
-    if (trigger) observer.observe(trigger);
+    observer.observe(trigger);
 }
 
 // --- SECTION 6: INITIALIZATION ---
@@ -306,28 +316,13 @@ window.addEventListener('DOMContentLoaded', () => {
     initCharts();
     setupInfiniteScroll();
     refreshData(); 
-    loadMoreExecutions(true); // Φορτώνει τα executions με την πρώτη εκκίνηση
+    loadMoreExecutions(true); 
 
-    // Listeners για να ανανεώνονται τα γραφήματα όταν αλλάζεις φίλτρο
     const timeFilter = document.getElementById('timeRangeFilter');
     if (timeFilter) timeFilter.addEventListener('change', refreshData);
     
     const wfFilter = document.getElementById('workflowFilter');
     if (wfFilter) wfFilter.addEventListener('change', refreshData);
-
-    // Λογική για το κλείσιμο του Error Modal
-    const modal = document.getElementById('errorModal');
-    const closeBtn = document.querySelector('.close-modal');
-    
-    if (closeBtn && modal) {
-        closeBtn.onclick = () => modal.style.display = 'none';
-    }
-
-    window.onclick = (event) => {
-        if (modal && event.target == modal) {
-            modal.style.display = 'none';
-        }
-    };
 });
 
 // --- SECTION 7: TAB NAVIGATION & DYNAMIC TABLES ---
@@ -335,7 +330,6 @@ async function switchTab(tabName) {
     if (currentTab === tabName) return;
     currentTab = tabName;
 
-    // 1. Update Tab Styles (Αφαιρεί το active από όλα και το βάζει σε αυτό που πατήθηκε)
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.remove('active');
     });
@@ -345,31 +339,31 @@ async function switchTab(tabName) {
         activeBtn.classList.add('active');
     }
 
-    // 2. Setup Table Layout & Fetch Data (Με δικλείδες ασφαλείας για παλιά/νέα IDs)
-    const thead = document.getElementById('table-head') || document.querySelector('thead');
-    const tbody = document.getElementById('table-body') || document.getElementById('executionsTableBody');
-    const scrollTrigger = document.getElementById('scroll-trigger') || document.getElementById('scrollTrigger');
+    const thead = document.getElementById('tableHeader') || document.getElementById('table-head');
+    const tbody = document.getElementById('executionsTableBody') || document.getElementById('table-body');
+    const scrollTrigger = document.getElementById('scrollTrigger') || document.getElementById('scroll-trigger');
 
     if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-gray-500">Loading...</td></tr>';
 
     if (tabName === 'executions') {
-        // --- ALL EXECUTIONS TAB ---
         if (thead) thead.innerHTML = `
-            <tr class="text-n8n-text text-sm">
+            <tr class="text-gray-400 text-sm">
+                <th class="p-4 font-medium">ID</th>
                 <th class="p-4 font-medium">Workflow</th>
                 <th class="p-4 font-medium">Status</th>
                 <th class="p-4 font-medium">Started</th>
                 <th class="p-4 font-medium">Run Time</th>
-                <th class="p-4 font-medium">Exec. ID</th>
             </tr>
         `;
-        if (scrollTrigger) scrollTrigger.style.display = 'flex';
+        if (scrollTrigger) {
+            scrollTrigger.style.display = 'block';
+            scrollTrigger.innerHTML = '';
+        }
         loadMoreExecutions(true);
 
     } else if (tabName === 'slowest') {
-        // --- SLOWEST WORKFLOWS TAB ---
         if (thead) thead.innerHTML = `
-            <tr class="text-n8n-text text-sm">
+            <tr class="text-gray-400 text-sm">
                 <th class="p-4 font-medium">Workflow</th>
                 <th class="p-4 font-medium">Avg Run Time (7d)</th>
                 <th class="p-4 font-medium">Total Runs (7d)</th>
@@ -394,9 +388,8 @@ async function switchTab(tabName) {
         }
 
     } else if (tabName === 'errors') {
-        // --- ERROR HOTSPOTS TAB ---
         if (thead) thead.innerHTML = `
-            <tr class="text-n8n-text text-sm">
+            <tr class="text-gray-400 text-sm">
                 <th class="p-4 font-medium">Workflow</th>
                 <th class="p-4 font-medium">Errors (7d)</th>
                 <th class="p-4 font-medium">Total Runs (7d)</th>
