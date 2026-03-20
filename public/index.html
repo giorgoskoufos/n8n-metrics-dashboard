@@ -4,10 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>n8n Metrics Monitor</title>
+    
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
     <script>
         tailwind.config = {
             theme: {
@@ -20,6 +22,7 @@
             }
         }
     </script>
+    
     <style>
         body { background-color: #171717; color: #eeeeee; }
         .status-success { background-color: rgba(39, 130, 80, 0.2); color: #4ade80; }
@@ -28,7 +31,9 @@
     </style>
 </head>
 <body class="p-4 md:p-8">
+    
     <div class="max-w-7xl mx-auto">
+        
         <header class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
             <div>
                 <h1 class="text-2xl font-bold text-white">n8n Dashboard</h1>
@@ -52,6 +57,7 @@
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            
             <div class="lg:col-span-2 bg-n8n-card p-6 rounded-xl border border-gray-800 h-80 flex flex-col">
                 <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-2">
                     <h3 class="text-sm font-semibold text-gray-400">Execution Timeline</h3>
@@ -73,12 +79,13 @@
 
             <div class="bg-n8n-card p-6 rounded-xl border border-gray-800 h-80 flex flex-col">
                 <h3 class="text-sm font-semibold mb-4 text-gray-400">Top Workflows</h3>
-                <div class="flex-1 relative"><canvas id="doughnutChart"></canvas></div>
-                <div id="doughnutLegend" class="mt-4 space-y-2"></div>
+                <div class="flex-1 relative min-h-0">
+                    <canvas id="doughnutChart"></canvas>
+                </div>
+                <div id="doughnutLegend"></div>
             </div>
-        </div>
-
-        <div class="bg-n8n-card rounded-xl border border-gray-800 overflow-hidden">
+            
+        </div> <div class="bg-n8n-card rounded-xl border border-gray-800 overflow-hidden">
             <div class="flex border-b border-gray-800">
                 <button onclick="switchTab('executions')" class="tab-btn active px-6 py-4 text-sm font-medium">Executions</button>
                 <button onclick="switchTab('slowest')" class="tab-btn px-6 py-4 text-sm font-medium">Slowest (7d)</button>
@@ -87,16 +94,19 @@
             <div class="overflow-x-auto">
                 <table class="w-full text-left">
                     <thead id="tableHeader" class="bg-black/20">
-                        <tr class="text-gray-400 text-sm"><th class="p-4">ID</th><th class="p-4">Workflow</th><th class="p-4">Status</th><th class="p-4">Time</th><th class="p-4">Duration</th></tr>
+                        <tr class="text-gray-400 text-sm">
+                            <th class="p-4">ID</th>
+                            <th class="p-4">Workflow</th>
+                            <th class="p-4">Status</th>
+                            <th class="p-4">Time</th>
+                            <th class="p-4">Duration</th>
+                        </tr>
                     </thead>
                     <tbody id="executionsTableBody"></tbody>
                 </table>
                 <div id="scrollTrigger" class="h-10 text-center text-gray-500 text-sm py-2"></div>
             </div>
-        </div>
-    </div>
-
-    <div id="errorModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        </div> </div> <div id="errorModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
         <div class="bg-n8n-card border border-gray-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
             <div class="p-6 border-b border-gray-800 flex justify-between items-center">
                 <h3 class="text-xl font-bold text-n8n-danger">Error Details</h3>
@@ -113,5 +123,6 @@
     </div>
 
     <script src="logic/app.js"></script>
+
 </body>
 </html>

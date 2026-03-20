@@ -202,13 +202,19 @@ async function showError(execId) {
         const response = await fetch(`/api/execution-error/${execId}`);
         const data = await response.json();
         
-        msgBox.innerText = data.message;
+        console.log("Δεδομένα από το API:", data); // Έλεγχος στο console
+        
+        msgBox.innerText = data.message || 'Άγνωστο σφάλμα';
 
-        if (n8nLink && data.workflowId) {
-            n8nLink.href = `https://automations-n8n.xadp6y.easypanel.host/workflow/${data.workflowId}/executions/${execId}`;
+        // Ελέγχουμε αν έχουμε όλα τα απαραίτητα για το link
+        if (n8nLink && data.workflowId && data.n8nBaseUrl) {
+            n8nLink.href = `${data.n8nBaseUrl}/workflow/${data.workflowId}/executions/${execId}`;
             n8nLink.style.display = 'inline-block';
+        } else {
+            console.warn("Λείπει το workflowId ή το n8nBaseUrl. Τα δεδομένα είναι:", data);
         }
     } catch (err) {
+        console.error("Σφάλμα fetch:", err);
         msgBox.innerText = 'Σφάλμα κατά την ανάκτηση των δεδομένων από τον server.';
     }
 }

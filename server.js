@@ -181,7 +181,13 @@ app.get('/api/analytics/errors', async (req, res) => {
 //4.1 Endpoint για λήψη λεπτομερειών σφάλματος
 app.get('/api/execution-error/:id', async (req, res) => {
     try {
-        const query = 'SELECT data FROM execution_data WHERE "executionId" = $1';
+        // ΑΛΛΑΓΗ: Κάνουμε JOIN με τον κεντρικό πίνακα (execution_entity) για να πάρουμε και το workflowId
+        const query = `
+            SELECT d.data, e."workflowId" 
+            FROM execution_data d
+            JOIN execution_entity e ON d."executionId" = e.id
+            WHERE d."executionId" = $1
+        `;
         const result = await pool.query(query, [req.params.id]);
 
         if (result.rows.length === 0) {
@@ -190,6 +196,7 @@ app.get('/api/execution-error/:id', async (req, res) => {
 
         // Parsing με flatted
         const fullData = parse(result.rows[0].data);
+        const workflowId = result.rows[0].workflowId; // Το πήραμε από τη βάση!
         
         // Σύμφωνα με το log σου, η διαδρομή είναι: resultData -> error -> description
         let errorMessage = "Unknown error detail";
@@ -208,9 +215,12 @@ app.get('/api/execution-error/:id', async (req, res) => {
                 (root.message);
         }
 
+        // ΑΛΛΑΓΗ: Επιστρέφουμε το workflowId και το Base URL από το .env
         res.json({ 
             executionId: req.params.id,
-            message: errorMessage || "Unknown error detail"
+            message: errorMessage || "Unknown error detail",
+            workflowId: workflowId, 
+            n8nBaseUrl: process.env.N8N_EDITOR_BASE_URL // Διαβάζει κατευθείαν το .env του server
         });
     } catch (err) {
         console.error('Parsing Error:', err);
