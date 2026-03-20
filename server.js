@@ -1,23 +1,30 @@
+// ==========================================
+// n8n Analytics Dashboard - Backend Server
+// ==========================================
+
+// --- SECTION 1: SETUP & IMPORTS ---
 require('dotenv').config();
 const { parse } = require('flatted');
 const express = require('express');
 const { Pool } = require('pg');
+const { OpenAI } = require('openai'); // Προσθήκη OpenAI
 const path = require('path');
 
 const app = express();
 const port = process.env.DASHBOARD_PORT || 3000;
 
-// Dynamic db connection depending on the environment
-let poolConfig = {};
+// Middleware
+app.use(express.static('public'));
+app.use(express.json()); // Απαραίτητο για να διαβάζει τα JSON (όπως το AI prompt)
 
+// --- SECTION 2: DATABASE CONNECTIONS ---
+
+// 2A. Main Database Pool (Με πλήρη δικαιώματα για το dashboard)
+let poolConfig = {};
 if (process.env.DASHBOARD_DATABASE_URL) {
-    // Option Α: Server / Easypanel (Internal URL)
     console.log("Connecting to DB using DASHBOARD_DATABASE_URL...");
-    poolConfig = {
-        connectionString: process.env.DASHBOARD_DATABASE_URL,
-    };
+    poolConfig = { connectionString: process.env.DASHBOARD_DATABASE_URL };
 } else {
-    // Option Β: Local / External connection
     console.log("Connecting to DB using individual credentials...");
     poolConfig = {
         user: process.env.DASHBOARD_DB_USER,
@@ -27,89 +34,95 @@ if (process.env.DASHBOARD_DATABASE_URL) {
         port: process.env.DASHBOARD_DB_PORT,
     };
 }
-
 const pool = new Pool(poolConfig);
-app.use(express.static('public'));
 
-// 1. Endpoint για τα Metrics (Γραφήματα & KPIs)
-app.get('/api/metrics', async (req, res) => {
-  try {
-    const targetWorkflow = req.query.workflow; 
-    const timeRange = req.query.timeRange || '24h'; 
-
-    let intervalOffset = '23 hours';
-    let lookback = '24 hours';
-    let step = '1 hour';
-    let truncUnit = 'hour';
-
-    if (timeRange === '48h') {
-        intervalOffset = '47 hours';
-        lookback = '48 hours';
-    } else if (timeRange === '7d') {
-        intervalOffset = '6 days';
-        lookback = '7 days';
-        truncUnit = 'day'; 
-        step = '1 day';
-    }
-
-    const statsQuery = `
-      SELECT count(*) as total, count(*) FILTER (WHERE status = 'error') as error,
-             avg(extract(epoch from ("stoppedAt" - "startedAt"))) as avg_duration
-      FROM execution_entity WHERE "startedAt" > NOW() - INTERVAL '7 days';
-    `;
-
-    let hourlyParams = [];
-    if (targetWorkflow) hourlyParams.push(targetWorkflow);
-
-    // Το ::text στο t.time_point λύνει το πρόβλημα του NaN στη JavaScript!
-    const hourlyQuery = `
-      WITH time_series AS (
-          SELECT generate_series(date_trunc('${truncUnit}', NOW() - INTERVAL '${intervalOffset}'), date_trunc('${truncUnit}', NOW()), '${step}'::interval) AS time_point
-      ),
-      recent_executions AS (
-          SELECT e.id, e.status, date_trunc('${truncUnit}', e."startedAt") as exec_time
-          FROM execution_entity e
-          ${targetWorkflow ? 'JOIN workflow_entity w ON e."workflowId" = w.id' : ''}
-          WHERE e."startedAt" > NOW() - INTERVAL '${lookback}'
-          ${targetWorkflow ? 'AND w.name = $1' : ''}
-      )
-      SELECT t.time_point::text as time_val, 
-             COUNT(e.id) FILTER (WHERE e.status = 'success') AS success_count, 
-             COUNT(e.id) FILTER (WHERE e.status = 'error') AS error_count
-      FROM time_series t 
-      LEFT JOIN recent_executions e ON t.time_point = e.exec_time 
-      GROUP BY t.time_point 
-      ORDER BY t.time_point ASC;
-    `;
-
-    const topWorkflowsQuery = `
-      SELECT w.name AS workflow_name, COUNT(e.id) AS execution_count,
-             ROUND((COUNT(e.id) * 100.0 / SUM(COUNT(e.id)) OVER()), 2) AS percentage
-      FROM execution_entity e
-      JOIN workflow_entity w ON e."workflowId" = w.id
-      WHERE e."startedAt" > NOW() - INTERVAL '7 days'
-      GROUP BY w.id, w.name
-      ORDER BY execution_count DESC;
-    `;
-
-    const [stats, hourly, topWorkflows] = await Promise.all([
-        pool.query(statsQuery),
-        pool.query(hourlyQuery, hourlyParams), 
-        pool.query(topWorkflowsQuery)
-    ]);
-
-    res.json({
-      summary: stats.rows[0],
-      hourlyData: hourly.rows,
-      topWorkflows: topWorkflows.rows 
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Database error' });
-  }
+// 2B. AI Read-Only Database Pool (Απόλυτη Ασφάλεια!)
+const aiPool = new Pool({
+    connectionString: process.env.AI_DB_URL // π.χ. postgresql://n8n_readonly_ai:...
 });
 
-// 2. Executions Data Endpoint
+// 2C. OpenAI Initialization
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+
+// --- SECTION 3: CORE METRICS & EXECUTIONS ---
+
+app.get('/api/metrics', async (req, res) => {
+    try {
+        const targetWorkflow = req.query.workflow; 
+        const timeRange = req.query.timeRange || '24h'; 
+
+        let intervalOffset = '23 hours';
+        let lookback = '24 hours';
+        let step = '1 hour';
+        let truncUnit = 'hour';
+
+        if (timeRange === '48h') {
+            intervalOffset = '47 hours';
+            lookback = '48 hours';
+        } else if (timeRange === '7d') {
+            intervalOffset = '6 days';
+            lookback = '7 days';
+            truncUnit = 'day'; 
+            step = '1 day';
+        }
+
+        const statsQuery = `
+            SELECT count(*) as total, count(*) FILTER (WHERE status = 'error') as error,
+                   avg(extract(epoch from ("stoppedAt" - "startedAt"))) as avg_duration
+            FROM execution_entity WHERE "startedAt" > NOW() - INTERVAL '7 days';
+        `;
+
+        let hourlyParams = [];
+        if (targetWorkflow) hourlyParams.push(targetWorkflow);
+
+        const hourlyQuery = `
+            WITH time_series AS (
+                SELECT generate_series(date_trunc('${truncUnit}', NOW() - INTERVAL '${intervalOffset}'), date_trunc('${truncUnit}', NOW()), '${step}'::interval) AS time_point
+            ),
+            recent_executions AS (
+                SELECT e.id, e.status, date_trunc('${truncUnit}', e."startedAt") as exec_time
+                FROM execution_entity e
+                ${targetWorkflow ? 'JOIN workflow_entity w ON e."workflowId" = w.id' : ''}
+                WHERE e."startedAt" > NOW() - INTERVAL '${lookback}'
+                ${targetWorkflow ? 'AND w.name = $1' : ''}
+            )
+            SELECT t.time_point::text as time_val, 
+                   COUNT(e.id) FILTER (WHERE e.status = 'success') AS success_count, 
+                   COUNT(e.id) FILTER (WHERE e.status = 'error') AS error_count
+            FROM time_series t 
+            LEFT JOIN recent_executions e ON t.time_point = e.exec_time 
+            GROUP BY t.time_point 
+            ORDER BY t.time_point ASC;
+        `;
+
+        const topWorkflowsQuery = `
+            SELECT w.name AS workflow_name, COUNT(e.id) AS execution_count,
+                   ROUND((COUNT(e.id) * 100.0 / SUM(COUNT(e.id)) OVER()), 2) AS percentage
+            FROM execution_entity e
+            JOIN workflow_entity w ON e."workflowId" = w.id
+            WHERE e."startedAt" > NOW() - INTERVAL '7 days'
+            GROUP BY w.id, w.name
+            ORDER BY execution_count DESC;
+        `;
+
+        const [stats, hourly, topWorkflows] = await Promise.all([
+            pool.query(statsQuery),
+            pool.query(hourlyQuery, hourlyParams), 
+            pool.query(topWorkflowsQuery)
+        ]);
+
+        res.json({
+            summary: stats.rows[0],
+            hourlyData: hourly.rows,
+            topWorkflows: topWorkflows.rows 
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Database error' });
+    }
+});
+
 app.get('/api/executions', async (req, res) => {
     const limit = parseInt(req.query.limit) || 20;
     const offset = parseInt(req.query.offset) || 0;
@@ -132,7 +145,9 @@ app.get('/api/executions', async (req, res) => {
     }
 });
 
-// 3. Analytics: Top 10 Slowest Workflows (Last 7 Days)
+
+// --- SECTION 4: ANALYTICS (SLOWEST & ERRORS) ---
+
 app.get('/api/analytics/slowest', async (req, res) => {
     try {
         const query = `
@@ -155,7 +170,6 @@ app.get('/api/analytics/slowest', async (req, res) => {
     }
 });
 
-// 4. Analytics: Top 10 Error Hotspots (Last 7 Days)
 app.get('/api/analytics/errors', async (req, res) => {
     try {
         const query = `
@@ -178,12 +192,14 @@ app.get('/api/analytics/errors', async (req, res) => {
     }
 });
 
-//4.1 Endpoint για λήψη λεπτομερειών σφάλματος
+
+// --- SECTION 5: ERROR DETAILS (MODAL) ---
+
 app.get('/api/execution-error/:id', async (req, res) => {
     try {
-        // ΑΛΛΑΓΗ: Κάνουμε JOIN με τον κεντρικό πίνακα (execution_entity) για να πάρουμε και το workflowId
+        // ΠΡΟΣΟΧΗ: Κρατάμε το AS workflow_id για να μην χάσουμε το Link στο UI!
         const query = `
-            SELECT d.data, e."workflowId" 
+            SELECT d.data, e."workflowId" AS workflow_id 
             FROM execution_data d
             JOIN execution_entity e ON d."executionId" = e.id
             WHERE d."executionId" = $1
@@ -194,18 +210,14 @@ app.get('/api/execution-error/:id', async (req, res) => {
             return res.status(404).json({ error: 'No data found' });
         }
 
-        // Parsing με flatted
         const fullData = parse(result.rows[0].data);
-        const workflowId = result.rows[0].workflowId; // Το πήραμε από τη βάση!
+        const workflowId = result.rows[0].workflow_id; 
         
-        // Σύμφωνα με το log σου, η διαδρομή είναι: resultData -> error -> description
         let errorMessage = "Unknown error detail";
 
         if (fullData && fullData.resultData && fullData.resultData.error) {
-            // Αυτό καλύπτει την περίπτωση που είδαμε στο terminal
             errorMessage = fullData.resultData.error.description || fullData.resultData.error.message;
         } else if (fullData && fullData[0]) {
-            // Backup σε περίπτωση που το flatted επιστρέψει array (συνηθισμένο στο n8n)
             const root = fullData[0];
             errorMessage = 
                 (root.resultData?.error?.description) || 
@@ -215,12 +227,14 @@ app.get('/api/execution-error/:id', async (req, res) => {
                 (root.message);
         }
 
-        // ΑΛΛΑΓΗ: Επιστρέφουμε το workflowId και το Base URL από το .env
+        const finalUrl = process.env.N8N_EDITOR_BASE_URL || 'MISSING_ENV';
+        const finalWfId = workflowId || 'MISSING_ID';
+
         res.json({ 
             executionId: req.params.id,
             message: errorMessage || "Unknown error detail",
-            workflowId: workflowId, 
-            n8nBaseUrl: process.env.N8N_EDITOR_BASE_URL // Διαβάζει κατευθείαν το .env του server
+            workflowId: finalWfId, 
+            n8nBaseUrl: finalUrl
         });
     } catch (err) {
         console.error('Parsing Error:', err);
@@ -228,6 +242,85 @@ app.get('/api/execution-error/:id', async (req, res) => {
     }
 });
 
+
+// --- SECTION 6: AI CHATBOT (TEXT-TO-SQL) ---
+
+app.post('/api/ai-chat', async (req, res) => {
+    const userMessage = req.body.message;
+
+    if (!userMessage) return res.status(400).json({ error: "Message is required" });
+
+    // Το Σχέδιο (Schema) μόνο με τα απαραίτητα για το AI
+    const dbSchema = `
+        Tables:
+        1. workflow_entity
+           - id (string)
+           - name (string)
+           - active (boolean)
+           
+        2. execution_entity
+           - id (integer)
+           - "workflowId" (string) -> Foreign key to workflow_entity.id
+           - status (string: 'success', 'error', 'canceled')
+           - "startedAt" (timestamp)
+           - "stoppedAt" (timestamp)
+           - waitTill (timestamp)
+           
+        Rules:
+        - Always wrap case-sensitive column names in double quotes (e.g., e."workflowId").
+        - NEVER select from execution_data.
+        - To find executions by workflow name, JOIN workflow_entity w ON e."workflowId" = w.id.
+        - Return valid PostgreSQL syntax.
+    `;
+
+    try {
+        // ΦΑΣΗ 1: Generate SQL
+        const sqlPrompt = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [
+                { role: "system", content: `You are a strict PostgreSQL DBA. Translate natural language to SQL using this schema:\n${dbSchema}\nRespond ONLY with the raw SQL query. No formatting, no markdown.` },
+                { role: "user", content: userMessage }
+            ],
+            temperature: 0,
+        });
+
+        let generatedSql = sqlPrompt.choices[0].message.content.trim();
+        generatedSql = generatedSql.replace(/^```sql\n?/, '').replace(/```$/, '').trim();
+
+        // ΦΑΣΗ 2: Execute SQL (Με το aiPool!)
+        let dbResult;
+        try {
+            dbResult = await aiPool.query(generatedSql);
+        } catch (dbError) {
+            console.error("❌ ΤΟ SQL ΠΟΥ ΕΣΚΑΣΕ:", generatedSql);
+            console.error("❌ Ο ΛΟΓΟΣ (DB ERROR):", dbError);
+            return res.status(400).json({ error: "Το AI έγραψε μη έγκυρο SQL.", details: dbError.message, sqlUsed: generatedSql });
+        }
+
+        // ΦΑΣΗ 3: Translate Results to Human Language
+        const answerPrompt = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [
+                { role: "system", content: "You are an analytics assistant. Answer the user based ONLY on the JSON database results provided. Be brief, clear, and do not mention the database or SQL in your answer." },
+                { role: "user", content: `Question: ${userMessage}\nResults: ${JSON.stringify(dbResult.rows)}` }
+            ],
+            temperature: 0.7,
+        });
+
+        res.json({ 
+            answer: answerPrompt.choices[0].message.content,
+            sqlUsed: generatedSql 
+        });
+
+    } catch (error) {
+        console.error("AI Pipeline Error:", error);
+        res.status(500).json({ error: "Αποτυχία επικοινωνίας με το AI API." });
+    }
+});
+
+
+// --- SECTION 7: SERVER INITIALIZATION ---
+
 app.listen(port, () => {
-  console.log(`n8n-mobile app listening at http://localhost:${port}`);
+  console.log(`🚀 n8n Analytics Dashboard listening at http://localhost:${port}`);
 });
