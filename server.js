@@ -12,6 +12,10 @@ const path = require('path');
 
 const app = express();
 const port = process.env.DASHBOARD_PORT || 3000;
+const JWT_SECRET = process.env.DASHBOARD_JWT_SECRET;
+
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 
 // Middleware
 app.use(express.static('public'));
@@ -44,10 +48,66 @@ const aiPool = new Pool({
 // 2C. OpenAI Initialization
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// --- SECTION 2.5: AUTHENTICATION ---
+
+// To Endpoint για το Login
+app.post('/api/login', async (req, res) => {
+    const { email, password } = req.body;
+
+    try {
+        // Ψάχνουμε τον χρήστη στη βάση του n8n
+        const query = 'SELECT id, email, password, "firstName", "lastName" FROM "user" WHERE email = $1';
+        const dbRes = await pool.query(query, [email]);
+
+        if (dbRes.rows.length === 0) {
+            return res.status(401).json({ error: 'Wrong Credentials' });
+        }
+
+        const user = dbRes.rows[0];
+        
+        // Συγκρίνουμε τον κωδικό
+        const isMatch = await bcrypt.compare(password, user.password);
+
+        if (!isMatch) {
+            return res.status(401).json({ error: 'Wrong Credentials' });
+        }
+
+        // Φτιάχνουμε το Token (το "πάσο")
+        const token = jwt.sign(
+            { id: user.id, email: user.email, firstName: user.firstName }, 
+            JWT_SECRET, 
+            { expiresIn: '8h' }
+        );
+
+        res.json({ 
+            message: 'Sucessful Login!', 
+            token: token,
+            user: { firstName: user.firstName, lastName: user.lastName, email: user.email }
+        });
+
+    } catch (err) {
+        console.error('Login Error:', err);
+        res.status(500).json({ error: 'Internal server error during login' });
+    }
+});
+
+// Middlewares
+const authenticateToken = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; // reads "Bearer TOKEN"
+
+    if (!token) return res.status(401).json({ error: 'Απαιτείται σύνδεση (Missing Token)' });
+
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) return res.status(403).json({ error: 'Μη έγκυρο ή ληγμένο token' });
+        req.user = user;
+        next();
+    });
+};
 
 // --- SECTION 3: CORE METRICS & EXECUTIONS ---
 
-app.get('/api/metrics', async (req, res) => {
+app.get('/api/metrics', authenticateToken, async (req, res) => {
     try {
         const targetWorkflow = req.query.workflow; 
         const timeRange = req.query.timeRange || '24h'; 
@@ -123,7 +183,7 @@ app.get('/api/metrics', async (req, res) => {
     }
 });
 
-app.get('/api/executions', async (req, res) => {
+app.get('/api/executions', authenticateToken, async (req, res) => {
     const limit = parseInt(req.query.limit) || 20;
     const offset = parseInt(req.query.offset) || 0;
     
@@ -148,7 +208,7 @@ app.get('/api/executions', async (req, res) => {
 
 // --- SECTION 4: ANALYTICS (SLOWEST & ERRORS) ---
 
-app.get('/api/analytics/slowest', async (req, res) => {
+app.get('/api/analytics/slowest', authenticateToken, async (req, res) => {
     try {
         const query = `
             SELECT w.name, 
@@ -170,7 +230,7 @@ app.get('/api/analytics/slowest', async (req, res) => {
     }
 });
 
-app.get('/api/analytics/errors', async (req, res) => {
+app.get('/api/analytics/errors', authenticateToken, async (req, res) => {
     try {
         const query = `
             SELECT w.name, 
@@ -195,7 +255,7 @@ app.get('/api/analytics/errors', async (req, res) => {
 
 // --- SECTION 5: ERROR DETAILS (MODAL) ---
 
-app.get('/api/execution-error/:id', async (req, res) => {
+app.get('/api/execution-error/:id', authenticateToken, async (req, res) => {
     try {
         // ΠΡΟΣΟΧΗ: Κρατάμε το AS workflow_id για να μην χάσουμε το Link στο UI!
         const query = `
@@ -245,7 +305,7 @@ app.get('/api/execution-error/:id', async (req, res) => {
 
 // --- SECTION 6: AI CHATBOT (TEXT-TO-SQL) ---
 
-app.post('/api/ai-chat', async (req, res) => {
+app.post('/api/ai-chat', authenticateToken, async (req, res) => {
     const userMessage = req.body.message;
 
     if (!userMessage) return res.status(400).json({ error: "Message is required" });

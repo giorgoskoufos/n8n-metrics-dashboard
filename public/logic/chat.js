@@ -46,7 +46,7 @@ async function sendMessage() {
 
     try {
         // 4. Κλήση στο Backend API
-        const response = await fetch('/api/ai-chat', {
+        const response = await fetchWithAuth('/api/ai-chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message: text })

@@ -13,6 +13,35 @@ let currentOffset = 0;
 const LIMIT = 20;
 let isFetchingExecutions = false;
 
+// --- SECTION 1.5: AUTHENTICATION HELPER ---
+async function fetchWithAuth(url, options = {}) {
+    const token = localStorage.getItem('n8n_auth_token');
+    
+    // Περίπτωση 1: Δεν υπάρχει καθόλου token (π.χ. το έσβησες τελείως)
+    if (!token) {
+        alert("Απαιτείται σύνδεση!");
+        window.location.href = 'pages/login.html'; // Σε πετάει στο login
+        throw new Error("No token found");
+    }
+
+    const headers = {
+        ...options.headers,
+        'Authorization': `Bearer ${token}`
+    };
+
+    const response = await fetch(url, { ...options, headers });
+
+    // Περίπτωση 2: Ο server απέρριψε το token (π.χ. έσβησες ένα γράμμα και χάλασε η υπογραφή του, ή έληξαν οι 8 ώρες)
+    if (response.status === 401 || response.status === 403) {
+        localStorage.removeItem('n8n_auth_token'); // Καθαρίζουμε το "χαλασμένο" token
+        alert("Η συνεδρία έληξε ή δεν είναι έγκυρη. Παρακαλώ συνδεθείτε ξανά.");
+        window.location.href = 'pages/login.html'; // Σε πετάει στο login
+        throw new Error("Unauthorized");
+    }
+
+    return response;
+}
+
 // --- SECTION 2: CHART INITIALIZATION ---
 function initCharts() {
     const ctxLine = document.getElementById('lineChart').getContext('2d');
@@ -54,7 +83,7 @@ async function fetchMetricsData() {
     if (timeFilter) params.append('timeRange', timeFilter);
     
     try {
-        const response = await fetch(`/api/metrics?${params.toString()}`);
+        const response = await fetchWithAuth(`/api/metrics?${params.toString()}`);
         return response.ok ? await response.json() : null;
     } catch (err) {
         console.error("Error fetching metrics:", err);
@@ -64,7 +93,7 @@ async function fetchMetricsData() {
 
 async function fetchExecutions(offset, limit) {
     try {
-        const response = await fetch(`/api/executions?offset=${offset}&limit=${limit}`);
+        const response = await fetchWithAuth(`/api/executions?offset=${offset}&limit=${limit}`);
         return response.ok ? await response.json() : [];
     } catch (err) {
         console.error("Error fetching executions:", err);
@@ -199,7 +228,7 @@ async function showError(execId) {
     modal.style.display = 'flex'; 
 
     try {
-        const response = await fetch(`/api/execution-error/${execId}`);
+        const response = await fetchWithAuth(`/api/execution-error/${execId}`);
         const data = await response.json();
         
         console.log("Δεδομένα από το API:", data); // Έλεγχος στο console
@@ -377,7 +406,7 @@ async function switchTab(tabName) {
         `;
         if (scrollTrigger) scrollTrigger.style.display = 'none';
         
-        const res = await fetch('/api/analytics/slowest');
+        const res = await fetchWithAuth('/api/analytics/slowest');
         const data = await res.json();
         if (tbody) {
             tbody.innerHTML = '';
@@ -404,7 +433,7 @@ async function switchTab(tabName) {
         `;
         if (scrollTrigger) scrollTrigger.style.display = 'none'; 
         
-        const res = await fetch('/api/analytics/errors');
+        const res = await fetchWithAuth('/api/analytics/errors');
         const data = await res.json();
         if (tbody) {
             tbody.innerHTML = '';
