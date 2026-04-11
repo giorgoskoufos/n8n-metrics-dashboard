@@ -41,3 +41,20 @@ Refactored the `getMetrics` controller to ensure global data consistency when fi
 - **Logout System**: Created a globally accessible `window.logout()` function to clear `localStorage` and trigger session teardown.
 - **GitHub Actions**: Created `.github/workflows/deploy.yml` which triggers a `GET` request to the Easypanel deploy webhook on every push to `main`.
 - **NPM Scripts**: Standardized `npm start` and `npm run dev` (using `--watch`) in `package.json`.
+
+## 5. AI Assistant Evolution
+Transformed the AI chat from a simple query tool into a persistent, premium assistant with mobile-first optimizations.
+
+- **Conversational Memory**:
+    - **Persistence**: Created the `dashboard_chat_history` table (PostgreSQL) using UUID keys to align with the n8n schema.
+    - **Context Awareness**: Updated `aiController.js` to retrieve the last 10 messages, enabling the assistant to handle follow-up questions.
+- **Rich Data Presentation**:
+    - **Markdown Subsystem**: Integrated `marked.js` to support bold text and complex tabular data.
+    - **Scrollable Tables**: Implemented a responsive `.prose-chat` bridge to allow horizontal swiping for wide data tables on mobile devices.
+- **Fluid & Orientation-Aware UI**:
+    - **Dynamic Resizing**: Added a top-left resize handle with touch/mouse support (using absolute screen delta calculations). 
+    - **Landscape Support**: Raised the desktop breakpoint to **1024px** to ensure landscape iPhones remain in a full-screen optimized state.
+    - **Viewport Sync**: Optimized the `VisualViewport` API listeners to guarantee that the input field remains visible and synchronized during mobile keyboard interactions.
+- **Advanced SQL Training**:
+    - Refined the AI system prompt to enforce strict quoted-alias persistence (fixing the `ORDER BY` case-sensitivity bug).
+    - Taught the assistant PostgreSQL date arithmetic (INTERVALs) for accurate "Yesterday" vs. "Day Before" reporting.

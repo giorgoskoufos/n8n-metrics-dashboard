@@ -53,6 +53,27 @@ The AI Chat uses a custom "Text-to-SQL" pipeline:
 
 ---
 
+## 🏗️ Database Setup (Required for AI Chat)
+
+To enable persistent chat history and SQL tracking, you must create the following table in your n8n PostgreSQL database. This table links to the existing n8n `user` table via `user_id`:
+
+```sql
+-- 1. Create the persistent chat history table
+CREATE TABLE IF NOT EXISTS public.dashboard_chat_history (
+    id SERIAL PRIMARY KEY,
+    user_id UUID REFERENCES public."user"(id) ON DELETE CASCADE,
+    role VARCHAR(20) NOT NULL,
+    content TEXT NOT NULL,
+    sql_used TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 2. Add an index for fast history retrieval
+CREATE INDEX IF NOT EXISTS idx_chat_history_user ON public.dashboard_chat_history (user_id, created_at);
+```
+
+---
+
 ## 🛠️ Hosting Requirements
 
 To host this dashboard, you need access to your self-hosted n8n database.
