@@ -1,6 +1,34 @@
 # n8n Analytics Dashboard
 
-A high-performance, real-time analytics dashboard designed for self-hosted n8n instances. This application shares the same PostgreSQL database as n8n to provide deep insights into workflow executions, error hotspots, and performance bottlenecks.
+> [!NOTE]
+> This is a **test project**, free to use and open to the community. We welcome suggestions and contributions to make it better for everyone!
+
+A high-performance, real-time analytics dashboard designed for **self-hosted n8n** instances.
+
+### **🎯 Who is this for?**
+This tool is for the **Self-Hosted Community**. If you manage your own n8n instance and want professional analytics without the need for an enterprise license or a full cloud migration, this dashboard is designed for you.
+
+### **💡 The Solution: Bridging the Analytics Gap**
+While n8n is a powerful automation engine, deep historical analytics and performance insights are primarily available in the n8n Cloud tiers. For self-hosted users, accessing these "Insights" is often not an option unless they migrate their entire infrastructure to n8n Cloud—a move that many choose to avoid due to privacy, data residency, or cost constraints.
+
+This dashboard provides a robust alternative for the independent user:
+- **On-Premise Analytics**: Gain deep insights (beyond the basic 7-day summary) while keeping your data and workers on your own hardware.
+- **Operational Clarity**: High-granularity performance tracking across all executions without the need for an enterprise subscription.
+- **AI-Powered Discovery**: Interrogate your data using a natural language AI Assistant to identify bottlenecks, a functionality typically associated with managed services.
+- **Privacy & Sovereignty**: Your analytics data remains strictly within your PostgreSQL instance.
+
+---
+
+> [!IMPORTANT]
+> **Hard Requirements:**
+> 1. **Self-Hosted n8n only**: This requires direct access to the n8n database.
+> 2. **PostgreSQL Only**: Your n8n instance must be configured to use **PostgreSQL**. It will NOT work with the default SQLite database.
+
+---
+
+> [!WARNING]
+> **Version Compatibility & Schema Dependency**
+> This dashboard directly queries n8n's internal database schema (specifically the `workflow_entity` and `execution_entity` tables). It has been built and tested against **n8n Version 1.x / 2.x**. Major future updates to n8n may alter this internal schema and require subsequent dashboard updates.
 
 ---
 
@@ -10,6 +38,17 @@ A high-performance, real-time analytics dashboard designed for self-hosted n8n i
 - **Error Hotspots**: Identify which workflows are failing the most.
 - **AI Analytics Assistant**: A natural language interface to query your data (e.g., "Which workflow was the slowest yesterday?").
 - **Secure by Design**: Built-in authentication, rate limiting, and strict Content Security Policies.
+
+### 📊 Enabling Deep Historical Analytics
+By default, n8n prunes execution data frequently to save disk space. To fully utilize this dashboard and visualize long-term trends, you must configure your n8n instance to retain data for longer periods. 
+
+Add the following environment variables to your **n8n instance** (example for keeping data for 720 days / ~2 years):
+```env
+EXECUTIONS_DATA_PRUNE=true
+EXECUTIONS_DATA_MAX_AGE=720
+```
+> [!NOTE]
+> Increasing data retention will significantly increase your PostgreSQL database size. Ensure your host has adequate disk space.
 
 ---
 
@@ -55,10 +94,21 @@ The AI Chat uses a custom "Text-to-SQL" pipeline:
 
 ## 🏗️ Database Setup (Required for AI Chat)
 
-To enable persistent chat history and SQL tracking, you must create the following table in your n8n PostgreSQL database. This table links to the existing n8n `user` table via `user_id`:
+> [!CAUTION]
+> **Database Schema Modification**
+> The SQL below creates a table (`dashboard_chat_history`) with a Foreign Key linked to the internal n8n `user` table. While this ensures data integrity, **it is an unsupported modification** of the n8n schema. In rare cases, it could interfere with future n8n database migrations. Proceed at your own risk and always backup your database before updating n8n.
+
+Run the following SQL commands directly in your PostgreSQL database:
 
 ```sql
--- 1. Create the persistent chat history table
+-- 1. Create a Read-Only User for the AI Assistant (Crucial for Security)
+CREATE USER n8n_ai_readonly WITH PASSWORD 'your_secure_password';
+GRANT CONNECT ON DATABASE n8n_data TO n8n_ai_readonly;
+GRANT USAGE ON SCHEMA public TO n8n_ai_readonly;
+GRANT SELECT ON public.workflow_entity TO n8n_ai_readonly;
+GRANT SELECT ON public.execution_entity TO n8n_ai_readonly;
+
+-- 2. Create the persistent chat history table
 CREATE TABLE IF NOT EXISTS public.dashboard_chat_history (
     id SERIAL PRIMARY KEY,
     user_id UUID REFERENCES public."user"(id) ON DELETE CASCADE,
@@ -68,7 +118,7 @@ CREATE TABLE IF NOT EXISTS public.dashboard_chat_history (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 2. Add an index for fast history retrieval
+-- 3. Add an index for fast history retrieval
 CREATE INDEX IF NOT EXISTS idx_chat_history_user ON public.dashboard_chat_history (user_id, created_at);
 ```
 
