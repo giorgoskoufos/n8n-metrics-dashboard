@@ -26,17 +26,17 @@ Transform the monolithic `server.js` into an MVC-style structure.
 ## Phase 3: Frontend Route Guarding
 Ensure all protected pages use the authentication guard properly.
 
-- [ ] **Audit `public/index.html`**: Verify `<script src="logic/guard.js"></script>` is the first executed script in the `<head>`.
-- [ ] **Audit `public/pages/chat.html`**: Inject `<script src="../logic/guard.js"></script>` to ensure unauthenticated users cannot access the chat.
-- [ ] **Review `public/logic/guard.js`**: Verify the pathing logic correctly routes users to the login page regardless of their current directory depth.
+- [x] **Audit `public/index.html`**: Verify `<script src="logic/guard.js"></script>` is the first executed script in the `<head>`.
+- [x] **Audit `public/pages/chat.html`**: Inject `<script src="../logic/guard.js"></script>` to ensure unauthenticated users cannot access the chat.
+- [x] **Review `public/logic/guard.js`**: Verify the pathing logic correctly routes users to the login page regardless of their current directory depth.
 
 ## Phase 4: Logout Implementation
 Provide users a straightforward way to end their session.
 
-- [ ] **UI Updates**:
-  - Add a "Logout" button/icon in the header of `public/index.html`.
-  - Add a "Logout" button/icon in the header of `public/pages/chat.html`.
-- [ ] **Logic Updates**:
-  - Create a reusable `logout()` function (could be added to `guard.js` or `app.js`).
-  - Clear `n8n_auth_token` from `localStorage`.
-  - Redirect the user to `login.html`.
+- [x] **UI Updates**:
+  - [x] Add a "Logout" button/icon in the header of `public/index.html`.
+  - [x] Add a "Logout" button/icon in the header of `public/pages/chat.html`.
+- [x] **Logic Updates**:
+  - [x] Create a reusable `logout()` function (could be added to `guard.js` or `app.js`).
+  - [x] Clear `n8n_auth_token` from `localStorage`.
+  - [x] Redirect the user to `login.html`.
