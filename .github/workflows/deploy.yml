@@ -1,0 +1,15 @@
+name: Deploy to Easypanel
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Easypanel Deployment
+        run: |
+          curl -X GET "${{ secrets.N8N_METRICS_DASHBOARD_EASYPANEL_DEPLOY_URL }}"
