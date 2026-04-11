@@ -21,6 +21,9 @@ const dbSchema = `
     - Always wrap case-sensitive column names in double quotes (e.g., e."workflowId").
     - NEVER select from execution_data.
     - To find executions by workflow name, JOIN workflow_entity w ON e."workflowId" = w.id.
+    - For date-specific counts (yesterday, 2 days ago, etc.), use: "startedAt"::date = CURRENT_DATE - INTERVAL 'n days'.
+    - When multiple time periods are requested as columns, use conditional aggregation (e.g., COUNT(*) FILTER (WHERE ...)).
+    - IMPORTANT: If you use a quoted alias (e.g., AS "totalExecutions"), you MUST use the exact same quoted name in the ORDER BY clause.
     - Return valid PostgreSQL syntax.
 `;
 
@@ -63,7 +66,7 @@ exports.chat = async (req, res) => {
         // --- STEP 2: Execute SQL ---
         let dbResult;
         try {
-            await aiPool.query('SET statement_timeout = 5000'); 
+            await aiPool.query('SET statement_timeout = 5000');
             dbResult = await aiPool.query(generatedSql);
         } catch (dbError) {
             console.error("❌ SQL ERROR:", generatedSql, dbError);
@@ -73,11 +76,11 @@ exports.chat = async (req, res) => {
         // --- STEP 3: Translate Results to Human Language ---
         const rowCount = dbResult.rows.length;
         const truncatedRows = dbResult.rows.slice(0, 50);
-        
+
         const answerPrompt = await openai.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [
-                { role: "system", content: "You are an analytics assistant. Answer the user based ONLY on the JSON database results provided. If there are many results, summarize the key findings. Be brief, clear, and do not mention the database or SQL in your answer." },
+                { role: "system", content: "You are an analytics assistant. Answer the user based ONLY on the JSON database results provided. If the data has 2 or more columns, ALWAYS use a Markdown table for clarity. Be brief, clear, and do not mention the database or SQL in your answer." },
                 ...chatContext,
                 { role: "user", content: `Question: ${userMessage}\nTotal Results in DB: ${rowCount}\nSample Results (Top 50): ${JSON.stringify(truncatedRows)}` }
             ],
@@ -96,9 +99,9 @@ exports.chat = async (req, res) => {
             [userId, 'ai', answer, generatedSql]
         );
 
-        res.json({ 
+        res.json({
             answer,
-            sqlUsed: generatedSql 
+            sqlUsed: generatedSql
         });
 
     } catch (error) {
