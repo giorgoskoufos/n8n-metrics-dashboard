@@ -2,11 +2,12 @@
 <html lang="el">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0, viewport-fit=cover, interactive-widget=resizes-content">
     <title>n8n Metrics Monitor</title>
     <script src="logic/guard.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
@@ -24,6 +25,7 @@
     </script>
     
     <style>
+        :root { color-scheme: dark; }
         body { background-color: #171717; color: #eeeeee; }
         .status-success { background-color: rgba(39, 130, 80, 0.2); color: #4ade80; }
         .status-error { background-color: rgba(241, 106, 117, 0.2); color: #f87171; }
@@ -44,16 +46,36 @@
                 <p class="text-gray-400">Real-time workflow analytics</p>
             </div>
             <div class="flex items-center gap-3">
-                <a href="pages/chat.html" target="_blank" class="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-lg font-semibold transition-colors border border-indigo-500">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                <button onclick="toggleChat()" class="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-lg font-semibold transition-colors border border-indigo-500 shadow-lg shadow-indigo-600/20">
+                    <i class="fa-solid fa-wand-magic-sparkles text-sm"></i>
                     Ask AI Assistant
-                </a>
+                </button>
                 <button onclick="logout()" class="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2.5 rounded-lg font-semibold transition-colors border border-gray-700">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
                     Logout
                 </button>
             </div>
         </header>
+
+        <div class="flex flex-col sm:flex-row justify-end items-center mb-8 gap-4 w-full">
+            <!-- Workflow Filter -->
+            <div class="flex items-center gap-3 bg-n8n-card border border-gray-800 rounded-lg px-4 py-2 w-full sm:w-64 hover:border-gray-700 transition-colors">
+                <span class="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-0">Workflow</span>
+                <select id="workflowFilter" class="bg-transparent border-none text-sm text-white font-semibold focus:outline-none w-full cursor-pointer">
+                    <option value="" class="bg-n8n-card text-white">All Workflows</option>
+                </select>
+            </div>
+            
+            <!-- Time Range Filter -->
+            <div class="flex items-center gap-3 bg-n8n-card border border-gray-800 rounded-lg px-4 py-2 w-full sm:w-64 hover:border-gray-700 transition-colors">
+                <span class="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-0">Range</span>
+                <select id="timeRangeFilter" class="bg-transparent border-none text-sm text-white font-semibold focus:outline-none w-full cursor-pointer">
+                    <option value="24h" class="bg-n8n-card text-white">Last 24h</option>
+                    <option value="48h" class="bg-n8n-card text-white">Last 48h</option>
+                    <option value="7d" class="bg-n8n-card text-white">Last 7 Days</option>
+                </select>
+            </div>
+        </div>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div class="bg-n8n-card p-6 rounded-xl border border-gray-800">
@@ -75,16 +97,6 @@
             <div class="lg:col-span-2 bg-n8n-card p-6 rounded-xl border border-gray-800 h-80 flex flex-col">
                 <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-2">
                     <h3 class="text-sm font-semibold text-gray-400">Execution Timeline</h3>
-                    <div class="flex gap-2">
-                        <select id="workflowFilter" class="bg-black/30 border border-gray-700 rounded-lg px-3 py-1 text-sm focus:outline-none focus:border-n8n-primary max-w-[200px] truncate">
-                            <option value="">All Workflows</option>
-                        </select>
-                        <select id="timeRangeFilter" class="bg-black/30 border border-gray-700 rounded-lg px-3 py-1 text-sm focus:outline-none focus:border-n8n-primary">
-                            <option value="24h">Last 24h</option>
-                            <option value="48h">Last 48h</option>
-                            <option value="7d">Last 7 Days</option>
-                        </select>
-                    </div>
                 </div>
                 <div class="flex-1 relative">
                     <canvas id="lineChart"></canvas>
@@ -136,7 +148,65 @@
         </div>
     </div>
 
-    <script src="logic/app.js"></script>
+    <!-- ========================================== -->
+    <!-- AI CHAT WIDGET -->
+    <!-- ========================================== -->
+    
+    <!-- Floating Action Button -->
+    <button id="chatToggle" onclick="toggleChat()" 
+            class="fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-2xl flex items-center justify-center z-50 transition-all hover:rotate-12 hover:scale-110 active:scale-95 group">
+        <i class="fa-solid fa-robot text-2xl group-hover:hidden"></i>
+        <i class="fa-solid fa-xmark text-2xl hidden group-hover:block"></i>
+    </button>
 
+    <!-- Chat Window Container -->
+    <div id="chatWidget" 
+         class="fixed sm:bottom-24 sm:right-6 inset-0 sm:inset-auto w-full sm:w-[400px] h-[100dvh] sm:h-[600px] bg-n8n-dark sm:border border-gray-800 sm:rounded-3xl shadow-2xl flex flex-col z-[100] transform transition-all translate-y-full sm:translate-y-10 opacity-0 pointer-events-none overflow-hidden origin-bottom">
+        
+        <!-- Chat Header (Static) -->
+        <div class="bg-n8n-card border-b border-gray-800 p-4 flex justify-between items-center shrink-0 z-10">
+            <div class="flex items-center gap-3">
+                <div class="bg-indigo-600/20 w-8 h-8 flex items-center justify-center rounded-lg">
+                    <i class="fa-solid fa-robot text-indigo-400 text-sm"></i>
+                </div>
+                <div>
+                    <h4 class="text-sm font-bold">n8n AI Assistant</h4>
+                    <p class="text-[10px] text-green-500 flex items-center gap-1">
+                        <span class="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span> Analyzing Live Data
+                    </p>
+                </div>
+            </div>
+            <button onclick="toggleChat()" class="text-gray-500 hover:text-white transition-colors p-2 h-10 w-10 flex items-center justify-center">
+                <i class="fa-solid fa-xmark text-lg sm:fa-minus sm:text-base"></i>
+            </button>
+        </div>
+
+        <!-- Chat Messages (Scrollable / Shrinkable) -->
+        <main id="chatBox" class="flex-1 overflow-y-auto p-4 flex flex-col gap-4 scroll-smooth overscroll-contain">
+            <div class="flex gap-4 items-start w-full">
+                <div class="bg-indigo-600/10 border border-indigo-500/20 w-8 h-8 shrink-0 flex items-center justify-center rounded-full mt-1">
+                    <i class="fa-solid fa-robot text-indigo-400 text-sm"></i>
+                </div>
+                <div class="bg-n8n-card border border-gray-800 p-3 rounded-2xl rounded-tl-none max-w-[85%] shadow-sm">
+                    <p class="text-xs leading-relaxed">Hi! I can analyze your metrics and answer questions about your workflows.<br><br>Try: <span class="text-gray-400 italic">"What were the top 3 workflows yesterday by execution count?"</span></p>
+                </div>
+            </div>
+        </main>
+
+        <!-- Chat Input (Rises with keyboard) -->
+        <footer class="bg-n8n-card border-t border-gray-800 p-4 shrink-0 z-10">
+            <div class="relative flex items-center bg-black/40 border border-gray-700 rounded-xl focus-within:border-indigo-500 transition-colors">
+                <textarea id="userInput" rows="1" placeholder="Ask about your data..." 
+                          class="bg-transparent border-none w-full py-3 pl-4 pr-12 text-base text-white focus:outline-none resize-none max-h-32"></textarea>
+                <button id="sendBtn" class="absolute right-2 w-8 h-8 flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors shadow-lg shadow-indigo-600/20">
+                    <i class="fa-solid fa-paper-plane text-xs"></i>
+                </button>
+            </div>
+            <p class="text-[9px] text-gray-500 mt-2 text-center italic">AI responses are limited to database analysis.</p>
+        </footer>
+    </div>
+    
+    <script src="logic/app.js"></script>
+    <script src="logic/chat-widget.js"></script>
 </body>
 </html>

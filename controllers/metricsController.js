@@ -24,11 +24,14 @@ exports.getMetrics = async (req, res) => {
         const statsQuery = `
             SELECT count(*) as total, count(*) FILTER (WHERE status = 'error') as error,
                    avg(extract(epoch from ("stoppedAt" - "startedAt"))) as avg_duration
-            FROM execution_entity WHERE "startedAt" > NOW() - INTERVAL '7 days';
+            FROM execution_entity e
+            ${targetWorkflow ? 'JOIN workflow_entity w ON e."workflowId" = w.id' : ''}
+            WHERE e."startedAt" > NOW() - INTERVAL '${lookback}'
+            ${targetWorkflow ? 'AND w.name = $1' : ''};
         `;
 
-        let hourlyParams = [];
-        if (targetWorkflow) hourlyParams.push(targetWorkflow);
+        let queryParams = [];
+        if (targetWorkflow) queryParams.push(targetWorkflow);
 
         const hourlyQuery = `
             WITH time_series AS (
@@ -55,14 +58,14 @@ exports.getMetrics = async (req, res) => {
                    ROUND((COUNT(e.id) * 100.0 / SUM(COUNT(e.id)) OVER()), 2) AS percentage
             FROM execution_entity e
             JOIN workflow_entity w ON e."workflowId" = w.id
-            WHERE e."startedAt" > NOW() - INTERVAL '7 days'
+            WHERE e."startedAt" > NOW() - INTERVAL '${lookback}'
             GROUP BY w.id, w.name
             ORDER BY execution_count DESC;
         `;
 
         const [stats, hourly, topWorkflows] = await Promise.all([
-            pool.query(statsQuery),
-            pool.query(hourlyQuery, hourlyParams), 
+            pool.query(statsQuery, queryParams),
+            pool.query(hourlyQuery, queryParams), 
             pool.query(topWorkflowsQuery)
         ]);
 
