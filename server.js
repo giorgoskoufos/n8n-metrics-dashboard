@@ -38,6 +38,17 @@ app.use('/api', authRoutes);
 app.use('/api', metricsRoutes);
 app.use('/api', aiRoutes);
 
+// Health Check Endpoint
+app.get('/healthz', async (req, res) => {
+    try {
+        const { pool } = require('./config/db');
+        await pool.query('SELECT 1');
+        res.status(200).json({ status: 'ok', message: 'Dashboard is healthy' });
+    } catch (error) {
+        res.status(500).json({ status: 'error', message: 'Database connection failed' });
+    }
+});
+
 // ETL Sync Engine
 const cron = require('node-cron');
 const { syncData } = require('./config/syncJob');

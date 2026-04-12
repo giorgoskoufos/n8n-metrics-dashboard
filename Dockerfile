@@ -1,20 +1,20 @@
-# Χρησιμοποιούμε την επίσημη ελαφριά έκδοση του Node.js 18
+# Use the official lightweight Node.js 18 image
 FROM node:18-alpine
 
-# Ορίζουμε ότι όλη η δουλειά μέσα στο container θα γίνει στον φάκελο /app
+# Define the working directory inside the container
 WORKDIR /app
 
-# Αντιγράφουμε ΠΡΩΤΑ τα package.json (αυτό κάνει το build πολύ πιο γρήγορο)
+# Copy package files first to leverage Docker cache
 COPY package*.json ./
 
-# Κατεβάζουμε μόνο τα απαραίτητα πακέτα (Express, pg, dotenv κλπ)
+# Install only production dependencies (Express, pg, dotenv, etc.)
 RUN npm install --production
 
-# Αντιγράφουμε όλο τον υπόλοιπο κώδικα (server.js, public folder κλπ)
+# Copy the rest of the application code (server.js, public folder, etc.)
 COPY . .
 
-# Ενημερώνουμε το Docker ότι η εφαρμογή μας ακούει στην πόρτα 3000
+# Tell Docker the application listens on port 3000
 EXPOSE 3000
 
-# Η εντολή που θα τρέξει μόλις πατήσεις το "Start" στο Easypanel
+# Startup command for the container
 CMD ["node", "server.js"]

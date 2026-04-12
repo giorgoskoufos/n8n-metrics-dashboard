@@ -9,15 +9,21 @@ exports.getMetrics = async (req, res) => {
 
         let intervalOffset = '-23 hours';
         let lookback = '-24 hours';
+        let prevLookbackEnd = '-24 hours';
+        let prevLookbackStart = '-48 hours';
         let step = '+1 hour';
         let truncUnitFormat = '%Y-%m-%d %H:00:00';
 
         if (timeRange === '48h') {
             intervalOffset = '-47 hours';
             lookback = '-48 hours';
+            prevLookbackEnd = '-48 hours';
+            prevLookbackStart = '-96 hours';
         } else if (timeRange === '7d') {
             intervalOffset = '-6 days';
             lookback = '-7 days';
+            prevLookbackEnd = '-7 days';
+            prevLookbackStart = '-14 days';
             truncUnitFormat = '%Y-%m-%d 00:00:00'; 
             step = '+1 day';
         }
@@ -29,6 +35,16 @@ exports.getMetrics = async (req, res) => {
             FROM execution_entity e
             ${targetWorkflow ? 'JOIN workflow_entity w ON e."workflowId" = w.id' : ''}
             WHERE datetime(e."startedAt") > datetime('now', '${lookback}')
+            ${targetWorkflow ? 'AND w.name = ?' : ''};
+        `;
+
+        const prevStatsQuery = `
+            SELECT COUNT(*) as total, 
+                   SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error
+            FROM execution_entity e
+            ${targetWorkflow ? 'JOIN workflow_entity w ON e."workflowId" = w.id' : ''}
+            WHERE datetime(e."startedAt") > datetime('now', '${prevLookbackStart}')
+              AND datetime(e."startedAt") <= datetime('now', '${prevLookbackEnd}')
             ${targetWorkflow ? 'AND w.name = ?' : ''};
         `;
 
@@ -69,14 +85,29 @@ exports.getMetrics = async (req, res) => {
             ORDER BY execution_count DESC;
         `;
 
-        const [stats, hourly, topWorkflows] = await Promise.all([
+        const [stats, prevStats, hourly, topWorkflows] = await Promise.all([
             localDb.query(statsQuery, queryParams),
-            localDb.query(hourlyQuery, targetWorkflow ? [targetWorkflow, targetWorkflow] : []), 
+            localDb.query(prevStatsQuery, queryParams),
+            localDb.query(hourlyQuery, targetWorkflow ? [targetWorkflow] : []), 
             localDb.query(topWorkflowsQuery)
         ]);
 
+        const currentTotal = stats.rows[0].total || 0;
+        const currentError = stats.rows[0].error || 0;
+        const prevTotal = prevStats.rows[0].total || 0;
+        const prevError = prevStats.rows[0].error || 0;
+
+        let trend_total_pct = 0;
+        let trend_error_pct = 0;
+
+        if (prevTotal > 0) trend_total_pct = ((currentTotal - prevTotal) / prevTotal) * 100;
+        if (prevTotal === 0 && currentTotal > 0) trend_total_pct = 100;
+        
+        if (prevError > 0) trend_error_pct = ((currentError - prevError) / prevError) * 100;
+        if (prevError === 0 && currentError > 0) trend_error_pct = 100;
+
         res.json({
-            summary: stats.rows[0],
+            summary: { ...stats.rows[0], trend_total_pct, trend_error_pct },
             hourlyData: hourly.rows,
             topWorkflows: topWorkflows.rows 
         });
@@ -206,5 +237,88 @@ exports.forceSync = async (req, res) => {
         res.json({ message: 'Sync Complete' });
     } catch(err) {
         res.status(500).json({ error: 'Force Sync Failed' });
+    }
+};
+
+// --- INSIGHTS & ROI METHODS ---
+
+exports.getSettings = async (req, res) => {
+    try {
+        const query = `
+            SELECT w.id, w.name, COALESCE(s.saved_time_seconds, 0) as saved_time_seconds
+            FROM workflow_entity w
+            LEFT JOIN workflow_settings s ON w.id = s.workflow_id
+            ORDER BY w.name ASC
+        `;
+        const result = await localDb.query(query);
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Database error fetching settings' });
+    }
+};
+
+exports.updateSettings = async (req, res) => {
+    const { settings } = req.body; 
+    if (!settings || !Array.isArray(settings)) return res.status(400).json({ error: 'Invalid settings payload' });
+    
+    try {
+        await localDb.execute('BEGIN TRANSACTION');
+        for (const s of settings) {
+            await localDb.execute(
+                `INSERT INTO workflow_settings (workflow_id, saved_time_seconds) 
+                 VALUES (?, ?) 
+                 ON CONFLICT(workflow_id) DO UPDATE SET saved_time_seconds=excluded.saved_time_seconds`, 
+                 [s.workflow_id, s.saved_time_seconds]
+            );
+        }
+        await localDb.execute('COMMIT');
+        res.json({ message: 'Settings saved' });
+    } catch (err) {
+        try { await localDb.execute('ROLLBACK'); } catch(e){}
+        console.error(err);
+        res.status(500).json({ error: 'Failed to update settings' });
+    }
+};
+
+exports.getRoiMetrics = async (req, res) => {
+    try {
+        const totalQuery = `
+            SELECT 
+                COUNT(e.id) as total_executions,
+                SUM(COALESCE(s.saved_time_seconds, 0)) as total_time_saved_seconds
+            FROM execution_entity e
+            JOIN workflow_entity w ON e."workflowId" = w.id
+            LEFT JOIN workflow_settings s ON w.id = s.workflow_id
+            WHERE e.status = 'success'
+        `;
+        
+        const workflowsQuery = `
+            SELECT 
+                w.name,
+                COUNT(e.id) as executions,
+                (COUNT(e.id) * COALESCE(s.saved_time_seconds, 0)) as time_saved_seconds
+            FROM execution_entity e
+            JOIN workflow_entity w ON e."workflowId" = w.id
+            LEFT JOIN workflow_settings s ON w.id = s.workflow_id
+            WHERE e.status = 'success'
+            GROUP BY w.id, w.name
+            HAVING time_saved_seconds > 0
+            ORDER BY time_saved_seconds DESC
+        `;
+        
+        const [totalStats, wfStats] = await Promise.all([
+            localDb.query(totalQuery),
+            localDb.query(workflowsQuery)
+        ]);
+
+        res.json({
+            summary: totalStats.rows[0],
+            topWorkflows: wfStats.rows
+        });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Database error fetching ROI metrics' });
     }
 };

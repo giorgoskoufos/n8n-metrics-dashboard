@@ -17,10 +17,10 @@ let isFetchingExecutions = false;
 async function fetchWithAuth(url, options = {}) {
     const token = localStorage.getItem('n8n_auth_token');
     
-    // Περίπτωση 1: Δεν υπάρχει καθόλου token (π.χ. το έσβησες τελείως)
+    // Case 1: No token present (e.g. user cleared localStorage)
     if (!token) {
-        alert("Απαιτείται σύνδεση!");
-        window.location.href = 'pages/login.html'; // Σε πετάει στο login
+        alert("Authentication required!");
+        window.location.href = 'pages/login.html'; // Redirect to login
         throw new Error("No token found");
     }
 
@@ -31,11 +31,11 @@ async function fetchWithAuth(url, options = {}) {
 
     const response = await fetch(url, { ...options, headers });
 
-    // Περίπτωση 2: Ο server απέρριψε το token (π.χ. έσβησες ένα γράμμα και χάλασε η υπογραφή του, ή έληξαν οι 8 ώρες)
+    // Case 2: Server rejected token (e.g. invalid signature or expired after 8h)
     if (response.status === 401 || response.status === 403) {
-        localStorage.removeItem('n8n_auth_token'); // Καθαρίζουμε το "χαλασμένο" token
-        alert("Η συνεδρία έληξε ή δεν είναι έγκυρη. Παρακαλώ συνδεθείτε ξανά.");
-        window.location.href = 'pages/login.html'; // Σε πετάει στο login
+        localStorage.removeItem('n8n_auth_token'); // Clear the invalid token
+        alert("Session expired or invalid. Please login again.");
+        window.location.href = 'pages/login.html'; // Redirect to login
         throw new Error("Unauthorized");
     }
 
@@ -118,6 +118,42 @@ function updateKpiCards(summary) {
     if (elFailed) elFailed.innerText = errors.toLocaleString();
     if (elRate) elRate.innerText = errorRate + '%';
     if (elTime) elTime.innerText = avgTime + 's';
+
+    // Update Trend Badges
+    const trendTotalEl = document.getElementById('trendTotal');
+    const trendErrorEl = document.getElementById('trendError');
+
+    if (trendTotalEl && summary.trend_total_pct !== undefined) {
+        const pct = parseFloat(summary.trend_total_pct);
+        trendTotalEl.classList.remove('hidden', 'bg-green-900/30', 'text-green-400', 'bg-red-900/30', 'text-red-400', 'bg-gray-800', 'text-gray-400');
+        if (pct > 0) {
+            trendTotalEl.classList.add('bg-green-900/30', 'text-green-400');
+            trendTotalEl.innerText = `+${pct.toFixed(1)}%`;
+        } else if (pct < 0) {
+            trendTotalEl.classList.add('bg-red-900/30', 'text-red-400');
+            trendTotalEl.innerText = `${pct.toFixed(1)}%`;
+        } else {
+            trendTotalEl.classList.add('bg-gray-800', 'text-gray-400');
+            trendTotalEl.innerText = `0%`;
+        }
+    }
+
+    if (trendErrorEl && summary.trend_error_pct !== undefined) {
+        const pct = parseFloat(summary.trend_error_pct);
+        trendErrorEl.classList.remove('hidden', 'bg-green-900/30', 'text-green-400', 'bg-red-900/30', 'text-red-400', 'bg-gray-800', 'text-gray-400');
+        if (pct < 0) {
+            // Negative error trend is GOOD (Green)
+            trendErrorEl.classList.add('bg-green-900/30', 'text-green-400');
+            trendErrorEl.innerText = `${pct.toFixed(1)}%`;
+        } else if (pct > 0) {
+            // Positive error trend is BAD (Red)
+            trendErrorEl.classList.add('bg-red-900/30', 'text-red-400');
+            trendErrorEl.innerText = `+${pct.toFixed(1)}%`;
+        } else {
+            trendErrorEl.classList.add('bg-gray-800', 'text-gray-400');
+            trendErrorEl.innerText = `0%`;
+        }
+    }
 }
 
 function updateLineChart(chartData) {
@@ -196,7 +232,7 @@ function updateDoughnutChart(workflows) {
 
 function populateDropdown(workflows) {
     const select = document.getElementById('workflowFilter');
-    // Γεμίζουμε μόνο αν είναι άδειο (έχει μόνο το "All Workflows")
+    // Populate only if empty (contains only the "All Workflows" option)
     if (select && select.options.length <= 1 && workflows) {
         const top15 = workflows.slice(0, 15);
         top15.forEach(wf => {
@@ -218,10 +254,10 @@ async function showError(execId) {
     if (!modal) return;
 
     idBox.innerText = execId;
-    msgBox.innerText = 'Φόρτωση λεπτομερειών σφάλματος...';
+    msgBox.innerText = 'Loading error details...';
     
     if (n8nLink) {
-        n8nLink.style.display = 'none'; // Κρύβουμε το link μέχρι να πάρουμε το σωστό
+        n8nLink.style.display = 'none'; // Hide the link until valid data is returned
     }
 
     modal.classList.remove('hidden');
@@ -231,20 +267,20 @@ async function showError(execId) {
         const response = await fetchWithAuth(`/api/execution-error/${execId}`);
         const data = await response.json();
         
-        console.log("Δεδομένα από το API:", data); // Έλεγχος στο console
+        console.log("API Result Data:", data); // Check console for debugging
         
-        msgBox.innerText = data.message || 'Άγνωστο σφάλμα';
+        msgBox.innerText = data.message || 'Unknown error';
 
-        // Ελέγχουμε αν έχουμε όλα τα απαραίτητα για το link
+        // Verify we have required data for deep-linking
         if (n8nLink && data.workflowId && data.n8nBaseUrl) {
             n8nLink.href = `${data.n8nBaseUrl}/workflow/${data.workflowId}/executions/${execId}`;
             n8nLink.style.display = 'inline-block';
         } else {
-            console.warn("Λείπει το workflowId ή το n8nBaseUrl. Τα δεδομένα είναι:", data);
+            console.warn("Missing workflowId or n8nBaseUrl. Data returned:", data);
         }
     } catch (err) {
-        console.error("Σφάλμα fetch:", err);
-        msgBox.innerText = 'Σφάλμα κατά την ανάκτηση των δεδομένων από τον server.';
+        console.error("Fetch Error:", err);
+        msgBox.innerText = 'Error retrieving data from the server.';
     }
 }
 

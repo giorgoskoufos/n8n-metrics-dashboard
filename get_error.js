@@ -3,7 +3,7 @@ const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
 
-// Ρύθμιση της σύνδεσης με τη βάση (ίδια λογική με το server.js σου)
+// Database connection setup (same logic as server.js)
 let poolConfig = {};
 if (process.env.DASHBOARD_DATABASE_URL) {
     poolConfig = { connectionString: process.env.DASHBOARD_DATABASE_URL };
@@ -20,40 +20,40 @@ if (process.env.DASHBOARD_DATABASE_URL) {
 const pool = new Pool(poolConfig);
 
 async function fetchError() {
-    const targetExecutionId = 325584; // Το ID που θέλουμε να αναλύσουμε
+    const targetExecutionId = 325584; // The ID we want to analyze
     
     try {
-        console.log(`🔍 Συνδεση στη βάση και ανάκτηση δεδομένων για το ID: ${targetExecutionId}...`);
+        console.log(`🔍 Connecting to database and fetching data for ID: ${targetExecutionId}...`);
         
-        // Προσοχή στα διπλά εισαγωγικά στο "executionId" λόγω Postgres camelCase
+        // Careful with double quotes on "executionId" due to Postgres camelCase
         const query = 'SELECT data FROM execution_data WHERE "executionId" = $1';
         const res = await pool.query(query, [targetExecutionId]);
         
         if (res.rows.length === 0) {
-            console.error("❌ Το Execution ID δεν βρέθηκε στη βάση!");
+            console.error("❌ Execution ID not found in database!");
             process.exit(1);
         }
 
         const rawData = res.rows[0].data;
 
-        // Δημιουργία του φακέλου public αν δεν υπάρχει (για σιγουριά)
+        // Create public folder if it doesn't exist (just in case)
         const publicDir = path.join(__dirname, 'public');
         if (!fs.existsSync(publicDir)){
             fs.mkdirSync(publicDir);
         }
 
-        // Αποθήκευση στο public/error_payload.txt
+        // Save to public/error_payload.txt
         const filePath = path.join(publicDir, 'error_325584.txt');
         fs.writeFileSync(filePath, rawData);
         
         console.log('--------------------------------------------------');
-        console.log('✅ ΤΟ ΑΡΧΕΙΟ ΔΗΜΙΟΥΡΓΗΘΗΚΕ ΕΠΙΤΥΧΩΣ!');
-        console.log(`📍 Τοποθεσία: ${filePath}`);
-        console.log(`🌐 Κατέβασέ το από: http://<IP-ΤΟΥ-SERVER>:3000/error_325584.txt`);
+        console.log('✅ FILE CREATED SUCCESSFULLY!');
+        console.log(`📍 Location: ${filePath}`);
+        console.log(`🌐 Download from: http://<SERVER-IP>:3000/error_325584.txt`);
         console.log('--------------------------------------------------');
 
     } catch (err) {
-        console.error("❌ Σφάλμα κατά την εκτέλεση:", err.message);
+        console.error("❌ Execution error:", err.message);
     } finally {
         await pool.end();
         process.exit();

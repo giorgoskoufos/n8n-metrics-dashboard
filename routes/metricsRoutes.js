@@ -10,4 +10,9 @@ router.get('/analytics/errors', authenticateToken, metricsController.getErrors);
 router.get('/execution-error/:id', authenticateToken, metricsController.getExecutionError);
 router.post('/sync/force', authenticateToken, metricsController.forceSync);
 
+// Insights & ROI
+router.get('/settings/roi', authenticateToken, metricsController.getSettings);
+router.post('/settings/roi', authenticateToken, metricsController.updateSettings);
+router.get('/analytics/roi', authenticateToken, metricsController.getRoiMetrics);
+
 module.exports = router;

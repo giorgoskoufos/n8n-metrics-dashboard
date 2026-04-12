@@ -43,6 +43,15 @@ function initDb() {
             )
         `);
 
+        // Workflow Settings (ROI)
+        localDb.run(`
+            CREATE TABLE IF NOT EXISTS workflow_settings (
+                workflow_id TEXT PRIMARY KEY,
+                saved_time_seconds INTEGER DEFAULT 0,
+                FOREIGN KEY (workflow_id) REFERENCES workflow_entity (id) ON DELETE CASCADE
+            )
+        `);
+
         // Execution Entity Replica
         localDb.run(`
             CREATE TABLE IF NOT EXISTS execution_entity (

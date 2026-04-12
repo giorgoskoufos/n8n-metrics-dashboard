@@ -9,22 +9,22 @@ const sendBtn = document.getElementById('sendBtn');
 
 // --- SECTION 1: EVENT LISTENERS ---
 
-// Αποστολή με το κουμπί
+// Submit with button
 sendBtn.addEventListener('click', sendMessage);
 
-// Αποστολή με το Enter (χωρίς Shift για αλλαγή γραμμής)
+// Submit with Enter (no Shift)
 userInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault(); // Αποτρέπει την αλλαγή γραμμής
+        e.preventDefault(); // Prevent newline
         sendMessage();
     }
 });
 
-// Αυτόματη αλλαγή ύψους του textarea καθώς γράφει ο χρήστης
+// Auto-resize textarea as the user types
 userInput.addEventListener('input', function() {
     this.style.height = 'auto';
     this.style.height = (this.scrollHeight) + 'px';
-    if(this.value === '') this.style.height = 'auto'; // Επαναφορά όταν αδειάσει
+    if(this.value === '') this.style.height = 'auto'; // Reset when empty
 });
 
 // --- SECTION 2: CORE LOGIC ---
@@ -33,20 +33,20 @@ async function sendMessage() {
     const text = userInput.value.trim();
     if (!text) return;
 
-    // 1. Προσθήκη μηνύματος χρήστη στο UI
+    // 1. Add user message to UI
     appendMessage('user', text);
     
-    // 2. Καθαρισμός και κλείδωμα του input
+    // 2. Clear and lock input
     userInput.value = '';
     userInput.style.height = 'auto';
     userInput.disabled = true;
     sendBtn.disabled = true;
 
-    // 3. Εμφάνιση του "Σκέφτεται..." indicator
+    // 3. Show thinking indicator
     const loadingId = showTypingIndicator();
 
     try {
-        // 4. Κλήση στο Backend API
+        // 4. Call Backend API
         const response = await fetchWithAuth('/api/ai-chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -55,22 +55,22 @@ async function sendMessage() {
         
         const data = await response.json();
         
-        // 5. Αφαίρεση του loading indicator
+        // 5. Remove loading indicator
         removeMessage(loadingId);
 
-        // 6. Εμφάνιση απάντησης AI
+        // 6. Append AI response
         if (response.ok) {
             appendMessage('ai', data.answer, data.sqlUsed);
         } else {
-            appendMessage('error', data.error || 'Προέκυψε κάποιο σφάλμα στο AI.', data.details);
+            appendMessage('error', data.error || 'AI encountered an error.', data.details);
         }
 
     } catch (err) {
         removeMessage(loadingId);
-        appendMessage('error', 'Αποτυχία σύνδεσης με τον server. Δοκίμασε ξανά σε λίγο.');
+        appendMessage('error', 'Connection failed. Please try again later.');
         console.error("AI Chat Error:", err);
     } finally {
-        // 7. Ξεκλείδωμα του input
+        // 7. Unlock input
         userInput.disabled = false;
         sendBtn.disabled = false;
         userInput.focus();
@@ -84,7 +84,7 @@ function appendMessage(role, text, sql = null) {
     msgDiv.classList.add('flex', 'w-full');
 
     if (role === 'user') {
-        // Συννεφάκι Χρήστη (Δεξιά, Μπλε)
+        // User Bubble (Right, Blue)
         msgDiv.classList.add('justify-end');
         msgDiv.innerHTML = `
             <div class="bg-indigo-600 text-white p-4 rounded-2xl rounded-tr-none max-w-[85%] shadow-sm">
@@ -92,7 +92,7 @@ function appendMessage(role, text, sql = null) {
             </div>
         `;
     } else {
-        // Συννεφάκι AI (Αριστερά, Σκούρο) ή Error (Κόκκινο)
+        // AI Bubble (Left, Dark) or Error (Red)
         const isError = role === 'error';
         const borderColor = isError ? 'border-red-900/50' : 'border-gray-800';
         const iconColor = isError ? 'text-red-400' : 'text-indigo-400';
@@ -102,7 +102,7 @@ function appendMessage(role, text, sql = null) {
         if (sql) {
             sqlHtml = `
                 <div class="mt-3 pt-3 border-t border-gray-700/50">
-                    <p class="text-xs text-gray-500 mb-1 font-semibold">Εκτελέστηκε το Query:</p>
+                    <p class="text-xs text-gray-500 mb-1 font-semibold">Executed Query:</p>
                     <pre class="bg-black/40 p-2 rounded text-xs font-mono text-gray-400 overflow-x-auto whitespace-pre-wrap">${escapeHtml(sql)}</pre>
                 </div>
             `;
@@ -155,7 +155,7 @@ function scrollToBottom() {
     chatBox.scrollTop = chatBox.scrollHeight;
 }
 
-// Helper: Προστασία από XSS (αν ο χρήστης βάλει HTML tags)
+// Helper: XSS Protection
 function escapeHtml(unsafe) {
     if (!unsafe) return '';
     return unsafe

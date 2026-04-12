@@ -92,6 +92,32 @@ The AI Chat uses a custom "Text-to-SQL" pipeline:
 
 ---
 
+## 🧱 Security & Data Privacy
+
+The dashboard is built with a **Security-First** mindset, explicitly protecting your production data and n8n secrets.
+
+### 1. Minimal Data Extraction (The AI Sandbox)
+The local SQLite engine does **not** mirror your full n8n database. We use a "need-to-know" approach:
+- **Synced Workflow Data**: Only `id`, `name`, and `active` status. We explicitly **exclude the `nodes` column**, meaning the AI Assistant has zero visibility into your credentials, API keys, or logic.
+- **Synced Execution Data**: Only `id`, `workflowId`, `status`, `startedAt`, and `stoppedAt`. We **exclude the `data` payload**, so your actual processing data never touches the analytics engine.
+- **Result**: The AI can answer questions about *how many* workflows failed or *when* they ran, but it physically **cannot see your sensitive data**.
+
+### 2. Guarded Architecture
+- **No SQL Mutation**: The dashboard has zero logic to `UPDATE` or `DELETE` your n8n workflows. It is a strictly read-only analytical tool.
+- **Airgapped AI**: The text-to-SQL logic runs against the local SQLite replica, not your Postgres server. Even if the AI generates a malicious query, it has no network path to your production instance.
+
+---
+
+## 🔐 Authentication (Zero-Config Passport)
+
+The dashboard integrates directly with your existing n8n user base. There is no separate signup or "dashboard-only" user management.
+
+- **Unified Logins**: You log in using the exact same **Email** and **Password** you use for your n8n instance. 
+- **Bcrypt Matching**: The dashboard uses `bcrypt` to compare your input against the hashed password stored in n8n's `user` table. Your raw password is never stored or logged anywhere.
+- **Pass-through Identity**: If you change your password in n8n, it immediately takes effect here. It's like having Active Directory or Single Sign-On, but natively hooked into your Postgres data.
+
+---
+
 ## 🏗️ Dashboard Database Engine
 
 > [!TIP]
