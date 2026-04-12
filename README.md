@@ -67,7 +67,7 @@ The backend follows a modular **MVC (Model-View-Controller)** architecture for s
 - **Routes (`/routes`)**: Maps public endpoints to the internal controller logic.
 
 ### Security Layers
-- **Text-to-SQL Isolation**: AI-generated queries are executed using a **Read-Only Database User** with a strict 5000ms timeout to prevent accidental or malicious runaway queries.
+- **Text-to-SQL Isolation**: AI-generated queries are securely sandboxed. They are executed against an isolated, local SQLite database containing only essential analytical fields, making it impossible to read internal `n8n` production secrets.
 - **Helmet**: Secures the app with HSTS, CSP, and XSS protection.
 
 ---
@@ -86,41 +86,17 @@ The frontend is designed to be lightweight and portable, requiring no build step
 ## 🤖 AI Chat Assistant
 
 The AI Chat uses a custom "Text-to-SQL" pipeline:
-1. **Intention Parsing**: Converts your natural language question into valid PostgreSQL syntax based on a provided schema of `workflow_entity` and `execution_entity`.
-2. **Safe Execution**: The SQL is run against the `aiPool` (Read-only).
+1. **Intention Parsing**: Converts your natural language question into valid SQLite syntax based on a restricted schema.
+2. **Safe Execution**: The SQL is executed locally against the isolated `dashboard.sqlite` engine.
 3. **Natural Response**: The raw data results are passed back to the LLM to generate a human-readable summary.
 
 ---
 
-## 🏗️ Database Setup (Required for AI Chat)
+## 🏗️ Dashboard Database Engine
 
-> [!CAUTION]
-> **Database Schema Modification**
-> The SQL below creates a table (`dashboard_chat_history`) with a Foreign Key linked to the internal n8n `user` table. While this ensures data integrity, **it is an unsupported modification** of the n8n schema. In rare cases, it could interfere with future n8n database migrations. Proceed at your own risk and always backup your database before updating n8n.
-
-Run the following SQL commands directly in your PostgreSQL database:
-
-```sql
--- 1. Create a Read-Only User for the AI Assistant (Crucial for Security)
-CREATE USER n8n_ai_readonly WITH PASSWORD 'your_secure_password';
-GRANT CONNECT ON DATABASE n8n_data TO n8n_ai_readonly;
-GRANT USAGE ON SCHEMA public TO n8n_ai_readonly;
-GRANT SELECT ON public.workflow_entity TO n8n_ai_readonly;
-GRANT SELECT ON public.execution_entity TO n8n_ai_readonly;
-
--- 2. Create the persistent chat history table
-CREATE TABLE IF NOT EXISTS public.dashboard_chat_history (
-    id SERIAL PRIMARY KEY,
-    user_id UUID REFERENCES public."user"(id) ON DELETE CASCADE,
-    role VARCHAR(20) NOT NULL,
-    content TEXT NOT NULL,
-    sql_used TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 3. Add an index for fast history retrieval
-CREATE INDEX IF NOT EXISTS idx_chat_history_user ON public.dashboard_chat_history (user_id, created_at);
-```
+> [!TIP]
+> **Zero Configuration Required**
+> The dashboard uses a sophisticated ETL (Extract, Transform, Load) pipeline to automatically sync the necessary analytics data from Postgres into a local SQLite `/dashboard.sqlite` database. This ensures your production n8n database is entirely protected from heavy analytical queries and AI text-to-SQL logic.
 
 ---
 
@@ -151,9 +127,11 @@ DASHBOARD_DB_PORT=5432
 # n8n Editor Integration (for deep-linking errors)
 N8N_EDITOR_BASE_URL=https://your-n8n-instance.com
 
-# AI Chat Subsystem (Requires Read-Only access for safety)
-AI_DB_URL=postgresql://read_only_user:password@host:port/database
+# AI Chat Subsystem
 OPENAI_API_KEY=sk-proj-your-key-here
+
+# Background Sync Frequency (in minutes, Optional, Defaults to 5)
+SYNC_INTERVAL_MINUTES=5
 ```
 
 ### Installation

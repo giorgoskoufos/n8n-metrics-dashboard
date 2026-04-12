@@ -38,6 +38,20 @@ app.use('/api', authRoutes);
 app.use('/api', metricsRoutes);
 app.use('/api', aiRoutes);
 
+// ETL Sync Engine
+const cron = require('node-cron');
+const { syncData } = require('./config/syncJob');
+
+const syncInterval = process.env.SYNC_INTERVAL_MINUTES || 5;
+cron.schedule(`*/${syncInterval} * * * *`, () => {
+    syncData();
+});
+
+// Run an initial sync on boot
+setTimeout(() => {
+    syncData();
+}, 2000);
+
 // Server Initialization
 const server = app.listen(port, () => {
     console.log(`🚀 n8n Analytics Dashboard modularized and listening at http://localhost:${port}`);

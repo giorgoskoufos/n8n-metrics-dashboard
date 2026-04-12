@@ -57,6 +57,10 @@
                 <p class="text-gray-400">Real-time workflow analytics</p>
             </div>
             <div class="flex items-center gap-3">
+                <button id="syncBtn" onclick="forceDbSync()" class="flex items-center gap-2 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-400 px-4 py-2.5 rounded-lg font-semibold transition-colors border border-indigo-500/20">
+                    <i id="syncIcon" class="fa-solid fa-rotate"></i>
+                    Sync Data
+                </button>
                 <button onclick="logout()" class="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2.5 rounded-lg font-semibold transition-colors border border-gray-700">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
                     Logout
@@ -218,6 +222,32 @@
         </footer>
     </div>
     
+    <script>
+        async function forceDbSync() {
+            const btn = document.getElementById('syncBtn');
+            const icon = document.getElementById('syncIcon');
+            btn.disabled = true;
+            icon.classList.add('fa-spin-pulse');
+            try {
+                const token = localStorage.getItem('dashboard_token');
+                if(!token) return;
+                const res = await fetch('/api/sync/force', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (res.ok) {
+                    window.location.reload(); 
+                } else {
+                    alert('Sync failed - ensure server is running.');
+                }
+            } catch(e) {
+                console.error(e);
+            } finally {
+                btn.disabled = false;
+                icon.classList.remove('fa-spin-pulse');
+            }
+        }
+    </script>
     <script src="logic/app.js"></script>
     <script src="logic/chat-widget.js"></script>
 </body>

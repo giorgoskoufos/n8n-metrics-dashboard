@@ -27,6 +27,13 @@ exports.login = async (req, res) => {
             { expiresIn: '8h' }
         );
 
+        // Replicate user to SQLite for local dashboard reference
+        const localDb = require('../config/localDb');
+        await localDb.execute(
+            'INSERT INTO users (id, email) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET email=excluded.email',
+            [user.id, user.email]
+        );
+
         res.json({ 
             message: 'Sucessful Login!', 
             token: token,

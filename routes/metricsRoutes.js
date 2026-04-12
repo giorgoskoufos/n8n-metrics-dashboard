@@ -8,5 +8,6 @@ router.get('/executions', authenticateToken, metricsController.getExecutions);
 router.get('/analytics/slowest', authenticateToken, metricsController.getSlowest);
 router.get('/analytics/errors', authenticateToken, metricsController.getErrors);
 router.get('/execution-error/:id', authenticateToken, metricsController.getExecutionError);
+router.post('/sync/force', authenticateToken, metricsController.forceSync);
 
 module.exports = router;
