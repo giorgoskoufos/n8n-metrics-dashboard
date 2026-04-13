@@ -17,7 +17,10 @@ router.get('/settings', authenticateToken, metricsController.getGlobalSettings);
 router.post('/settings', authenticateToken, metricsController.updateGlobalSettings);
 router.post('/settings/roi', authenticateToken, metricsController.updateSettings);
 router.get('/analytics/roi', authenticateToken, metricsController.getRoiMetrics);
+router.get('/analytics/first-execution-date', authenticateToken, metricsController.getFirstExecutionDate);
 router.get('/analytics/concurrency', authenticateToken, metricsController.getConcurrencyData);
 router.get('/analytics/concurrency/details', authenticateToken, metricsController.getConcurrencyDetails);
+router.get('/analytics/error-intelligence', authenticateToken, metricsController.getErrorIntelligence);
+router.get('/analytics/workflow-drilldown/:id', authenticateToken, metricsController.getWorkflowErrorDrilldown);
 
 module.exports = router;

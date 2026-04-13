@@ -84,6 +84,26 @@ function initDb() {
                 value TEXT
             )
         `);
+
+        // Execution Error Analytics
+        localDb.run(`
+            CREATE TABLE IF NOT EXISTS execution_error_analytics (
+                id INTEGER PRIMARY KEY,
+                workflow_id TEXT,
+                node_id TEXT,
+                node_name TEXT,
+                node_type TEXT,
+                error_type TEXT,
+                error_message TEXT,
+                error_stack TEXT,
+                source_node TEXT,
+                source_output_index INTEGER,
+                input_data TEXT,
+                metadata TEXT,
+                execution_source TEXT,
+                timestamp DATETIME
+            )
+        `);
     });
 }
 

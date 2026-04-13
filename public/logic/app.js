@@ -153,7 +153,7 @@ function initCharts() {
     const ctxDoughnut = document.getElementById('doughnutChart').getContext('2d');
     doughnutChart = new Chart(ctxDoughnut, {
         type: 'doughnut',
-        data: { labels: [], datasets: [{ data: [], borderWidth: 0, cutout: '75%' }] },
+        data: { labels: [], datasets: [{ data: [], borderWidth: 0, cutout: '75%', hoverOffset: 15 }] },
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
     });
 
@@ -184,6 +184,7 @@ function initCharts() {
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
             plugins: { 
                 legend: { display: false },
                 tooltip: {
@@ -454,6 +455,22 @@ async function fetchConcurrencyDetails(timestamp, windowSize = 5) {
             const durationSec = parseFloat(exec.current_duration);
             const durationStr = durationSec < 60 ? `${Math.round(durationSec)}s` : `${Math.round(durationSec/60)}m`;
 
+            let actionBtn = '';
+            if (isError) {
+                actionBtn = `
+                    <button onclick="showError('${exec.exec_id}')" class="text-red-500 hover:text-red-400 transition-colors" title="View Error Log">
+                        <i class="fa-solid fa-arrow-right"></i>
+                    </button>
+                `;
+            } else if (exec.n8nBaseUrl && exec.workflow_id) {
+                const link = `${exec.n8nBaseUrl}/workflow/${exec.workflow_id}/executions/${exec.exec_id}`;
+                actionBtn = `
+                    <a href="${link}" target="_blank" class="text-indigo-400 hover:text-indigo-300 transition-colors" title="Open Execution in n8n">
+                        <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                    </a>
+                `;
+            }
+
             return `
             <tr class="hover:bg-gray-800/30 transition-colors border-b border-gray-800/50">
                 <td class="p-4 text-white font-semibold text-sm truncate max-w-[200px]">${exec.workflow_name}</td>
@@ -461,9 +478,7 @@ async function fetchConcurrencyDetails(timestamp, windowSize = 5) {
                 <td class="p-4 text-gray-400 text-xs">${timeString}</td>
                 <td class="p-4 text-gray-500 text-[10px] font-mono">${durationStr}</td>
                 <td class="p-4 text-right">
-                    <button onclick="showError('${exec.exec_id}')" class="text-indigo-400 hover:text-indigo-300 transition-colors" title="View details">
-                        <i class="fa-solid fa-arrow-right"></i>
-                    </button>
+                    ${actionBtn}
                 </td>
             </tr>
             `;
@@ -508,6 +523,8 @@ async function showError(execId, hasSnapshot = false) {
     const deepDiveBtn = document.getElementById('deepDiveBtn');
 
     if (!modal) return;
+
+    closeDetailsModal(); // Close Execution Snapshot if it's open
 
     idBox.innerText = execId;
     nodeBox.innerText = '--';
@@ -638,7 +655,6 @@ function setupInfiniteScroll() {
     observer.observe(trigger);
 }
 
-// --- SECTION 6: INITIALIZATION ---
 async function refreshData() {
     const data = await fetchMetricsData();
     if (data) {
@@ -651,10 +667,78 @@ async function refreshData() {
     }
 
     // Fetch Concurrency
-    const concRes = await fetchWithAuth('/api/analytics/concurrency');
+    const dateInput = document.getElementById('trafficDate');
+    fetchConcurrency(dateInput ? dateInput.value : null);
+}
+
+async function fetchConcurrency(dateVal) {
+    let url = '/api/analytics/concurrency';
+    
+    if (dateVal) {
+        // Construct Local 00:00:00 to 23:59:59 times
+        const start = new Date(dateVal + 'T00:00:00');
+        const end = new Date(dateVal + 'T23:59:59.999');
+        url += `?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`;
+    }
+
+    const concRes = await fetchWithAuth(url);
     if (concRes.ok) {
         const concData = await concRes.json();
         updateConcurrencyChart(concData);
+    }
+}
+
+async function initDateFilter() {
+    const dateInput = document.getElementById('trafficDate');
+    const btn24h = document.getElementById('btn24h');
+    if (!dateInput) return;
+
+    try {
+        const res = await fetchWithAuth('/api/analytics/first-execution-date');
+        let firstDateIso = '';
+        if (res.ok) {
+            const data = await res.json();
+            if (data.firstDate) {
+                firstDateIso = data.firstDate.substring(0, 10);
+                dateInput.min = firstDateIso;
+            }
+        }
+        
+        // Max is always today
+        const todayLocal = new Date();
+        const offset = todayLocal.getTimezoneOffset() * 60000;
+        const localISOTime = (new Date(todayLocal.getTime() - offset)).toISOString().split('T')[0];
+        dateInput.max = localISOTime;
+
+        // Listeners
+        dateInput.addEventListener('change', (e) => {
+            const val = e.target.value;
+            if (val) {
+                // Mobile WebKit strict fallback validation
+                if ((firstDateIso && val < firstDateIso) || val > localISOTime) {
+                    e.target.value = ''; // Revert invalid choice
+                    e.target.blur(); // Force close the native mobile UI wheel
+                    setTimeout(() => {
+                        alert(`Please select a date between ${firstDateIso} and ${localISOTime}`);
+                    }, 400); // Wait for the wheel drop-down to fully exit
+                    return;
+                }
+                btn24h.classList.remove('bg-indigo-600/20', 'text-indigo-400');
+                btn24h.classList.add('bg-black/30', 'text-gray-500');
+                fetchConcurrency(val);
+            }
+        });
+
+        if (btn24h) {
+            btn24h.addEventListener('click', () => {
+                dateInput.value = ''; // Clear picker
+                btn24h.classList.add('bg-indigo-600/20', 'text-indigo-400');
+                btn24h.classList.remove('bg-black/30', 'text-gray-500');
+                fetchConcurrency(null);
+            });
+        }
+    } catch (err) {
+        console.error('Failed to init date filter limits', err);
     }
 }
 
@@ -662,6 +746,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     await initSettings();
     initCharts();
     setupInfiniteScroll();
+    await initDateFilter();
     refreshData(); 
     loadMoreExecutions(true); 
 

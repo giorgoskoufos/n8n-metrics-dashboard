@@ -248,9 +248,11 @@ exports.getExecutionError = async (req, res) => {
         const workflowId = result.rows[0].workflow_id; 
         
         let errorMessage = "Unknown error detail";
+        let nodeName = "Unknown Node";
 
-        if (fullData && fullData.resultData && fullData.resultData.error) {
-            errorMessage = fullData.resultData.error.description || fullData.resultData.error.message;
+        if (fullData && fullData.resultData) {
+            errorMessage = fullData.resultData.error?.description || fullData.resultData.error?.message;
+            nodeName = fullData.resultData.lastNodeExecuted || fullData.resultData.error?.node?.name;
         } else if (fullData && fullData[0]) {
             const root = fullData[0];
             errorMessage = 
@@ -259,17 +261,25 @@ exports.getExecutionError = async (req, res) => {
                 (root.error?.description) ||
                 (root.error?.message) ||
                 (root.message);
+            nodeName = root.resultData?.lastNodeExecuted || root.resultData?.error?.node?.name || root.error?.node?.name;
         }
 
         const finalUrl = process.env.N8N_EDITOR_BASE_URL || 'MISSING_ENV';
         const finalWfId = workflowId || 'MISSING_ID';
 
-        res.json({ 
+        const payload = { 
             executionId: req.params.id,
+            nodeName: nodeName || "Unknown Node",
             message: errorMessage || "Unknown error detail",
             workflowId: finalWfId, 
             n8nBaseUrl: finalUrl
-        });
+        };
+
+        if (req.query.full === 'true') {
+            payload.fullError = JSON.stringify(fullData, null, 2);
+        }
+
+        res.json(payload);
     } catch (err) {
         console.error('Parsing Error:', err);
         res.status(500).json({ error: 'Failed to parse error data' });
@@ -422,17 +432,74 @@ exports.getRoiMetrics = async (req, res) => {
 
 exports.getConcurrencyData = async (req, res) => {
     try {
+        const { start, end } = req.query;
+
+        // Default behavior: Rolling 24 hours from cache
+        if (!start || !end) {
+            const query = `
+                SELECT timestamp, active_count 
+                FROM concurrency_stats 
+                ORDER BY timestamp ASC 
+                LIMIT 1000
+            `;
+            const result = await localDb.query(query);
+            return res.json(result.rows);
+        }
+
+        // Specific Date behavior: Calculate 288 buckets locally
+        const startTimeMs = new Date(start).getTime();
+        const endTimeMs = new Date(end).getTime();
+
+        if (isNaN(startTimeMs) || isNaN(endTimeMs)) {
+            return res.status(400).json({ error: 'Invalid start or end date' });
+        }
+
+        // Fetch executions started within this entire day window
         const query = `
-            SELECT timestamp, active_count 
-            FROM concurrency_stats 
-            ORDER BY timestamp ASC 
-            LIMIT 1000
+            SELECT "startedAt" 
+            FROM execution_entity 
+            WHERE datetime("startedAt") >= datetime(?) 
+              AND datetime("startedAt") <= datetime(?)
         `;
-        const result = await localDb.query(query);
-        res.json(result.rows);
+        const execs = await localDb.query(query, [new Date(start).toISOString(), new Date(end).toISOString()]);
+
+        const execData = execs.rows.map(e => ({
+            sAt: new Date(e.startedAt + (e.startedAt.endsWith('Z') ? '' : 'Z')).getTime()
+        }));
+
+        const buckets = [];
+        // Generate 288 5-minute buckets starting from 00:00 local of that day
+        for (let i = 0; i < 288; i++) {
+            const bTimeMs = startTimeMs + (i * 5 * 60 * 1000);
+            buckets.push(new Date(bTimeMs).toISOString());
+        }
+
+        const stats = buckets.map(bTime => {
+            const bDateMs = new Date(bTime).getTime();
+            const nextBDateMs = bDateMs + (5 * 60 * 1000);
+            
+            const count = execData.filter(e => {
+                return e.sAt >= bDateMs && e.sAt < nextBDateMs;
+            }).length;
+            
+            return { timestamp: bTime, active_count: count };
+        });
+
+        res.json(stats);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Failed to fetch concurrency' });
+    }
+};
+
+exports.getFirstExecutionDate = async (req, res) => {
+    try {
+        const query = 'SELECT MIN("startedAt") as first_date FROM execution_entity';
+        const result = await localDb.query(query);
+        res.json({ firstDate: result.rows[0]?.first_date || null });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch first execution date' });
     }
 };
 
@@ -476,7 +543,7 @@ exports.getConcurrencyDetails = async (req, res) => {
     try {
         // Calculate the end of the window in SQL
         const query = `
-            SELECT w.name as workflow_name, e.id as exec_id, e.status, e."startedAt", e."stoppedAt",
+            SELECT w.name as workflow_name, w.id as workflow_id, e.id as exec_id, e.status, e."startedAt", e."stoppedAt",
                    (julianday(IFNULL(e."stoppedAt", datetime('now'))) - julianday(e."startedAt")) * 86400 as current_duration
             FROM execution_entity e
             JOIN workflow_entity w ON e."workflowId" = w.id
@@ -489,9 +556,157 @@ exports.getConcurrencyDetails = async (req, res) => {
             LIMIT 50
         `;
         const result = await localDb.query(query, [time, span, time]);
-        res.json(result.rows);
+        
+        const finalUrl = process.env.N8N_EDITOR_BASE_URL || '';
+        const mappedRows = result.rows.map(row => ({
+            ...row,
+            n8nBaseUrl: finalUrl
+        }));
+
+        res.json(mappedRows);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Failed to fetch concurrency details' });
+    }
+};
+
+exports.getErrorIntelligence = async (req, res) => {
+    try {
+        // 1. Stats Summary
+        const summaryQuery = `
+            SELECT 
+                COUNT(*) as total_errors,
+                COUNT(DISTINCT workflow_id) as affected_workflows,
+                COUNT(DISTINCT node_name) as unique_failing_nodes
+            FROM execution_error_analytics
+            WHERE datetime(timestamp) > datetime('now', '-7 days')
+        `;
+
+        // 2. Workflow Hotspots (Calculated Error Rate)
+        const workflowQuery = `
+            SELECT 
+                w.id,
+                w.name, 
+                COUNT(a.id) as error_count,
+                (SELECT COUNT(*) FROM execution_entity WHERE "workflowId" = w.id AND datetime("startedAt") > datetime('now', '-7 days')) as total_runs
+            FROM execution_error_analytics a
+            JOIN workflow_entity w ON a.workflow_id = w.id
+            WHERE datetime(a.timestamp) > datetime('now', '-7 days')
+            GROUP BY w.id, w.name
+            ORDER BY error_count DESC
+            LIMIT 10
+        `;
+
+        // 3. Node Hotspots (Which specific nodes are 'burners')
+        const nodeQuery = `
+            SELECT node_name, node_type, COUNT(*) as fail_count
+            FROM execution_error_analytics
+            WHERE datetime(timestamp) > datetime('now', '-7 days')
+            GROUP BY node_name, node_type
+            ORDER BY fail_count DESC
+            LIMIT 10
+        `;
+
+        // 4. Source Branch Analysis (Brittle paths)
+        const sourceQuery = `
+            SELECT source_node, source_output_index, COUNT(*) as crash_count
+            FROM execution_error_analytics
+            WHERE datetime(timestamp) > datetime('now', '-7 days') AND source_node != ''
+            GROUP BY source_node, source_output_index
+            ORDER BY crash_count DESC
+            LIMIT 10
+        `;
+
+        // 5. Recent Detailed Feed
+        const feedQuery = `
+            SELECT a.*, w.name as workflow_name
+            FROM execution_error_analytics a
+            JOIN workflow_entity w ON a.workflow_id = w.id
+            ORDER BY datetime(a.timestamp) DESC
+            LIMIT 30
+        `;
+
+        const [summary, workflows, nodes, sources, feed] = await Promise.all([
+            localDb.query(summaryQuery),
+            localDb.query(workflowQuery),
+            localDb.query(nodeQuery),
+            localDb.query(sourceQuery),
+            localDb.query(feedQuery)
+        ]);
+
+        const n8nBaseUrl = process.env.N8N_EDITOR_BASE_URL || '';
+
+        res.json({
+            summary: summary.rows[0],
+            workflows: workflows.rows,
+            nodes: nodes.rows,
+            sources: sources.rows,
+            feed: feed.rows,
+            n8nBaseUrl
+        });
+
+    } catch (err) {
+        console.error('[BACKEND] Error Analytics Intelligence Failed:', err);
+        res.status(500).json({ error: 'Failed to aggregate error intelligence' });
+    }
+};
+
+exports.getWorkflowErrorDrilldown = async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (!id) return res.status(400).json({ error: 'Workflow ID is required' });
+
+        // 1. Node Breakdown (Pie Chart)
+        const distributionQuery = `
+            SELECT node_name, COUNT(*) as count
+            FROM execution_error_analytics
+            WHERE workflow_id = ? AND datetime(timestamp) > datetime('now', '-7 days')
+            GROUP BY node_name
+            ORDER BY count DESC
+        `;
+
+        // 2. Source Breakdown (Most common path-to-error)
+        const sourceQuery = `
+            SELECT source_node, source_output_index, COUNT(*) as count
+            FROM execution_error_analytics
+            WHERE workflow_id = ? AND source_node != '' AND datetime(timestamp) > datetime('now', '-7 days')
+            GROUP BY source_node, source_output_index
+            ORDER BY count DESC
+            LIMIT 5
+        `;
+
+        // 3. Raw Data (Export purposes)
+        const rawQuery = `
+            SELECT id as exec_id, node_name, node_type, error_message, error_stack, source_node, source_output_index as branch, timestamp as started_at
+            FROM execution_error_analytics
+            WHERE workflow_id = ?
+            ORDER BY datetime(timestamp) DESC
+            LIMIT 200
+        `;
+
+        // 4. Workflow Name Info
+        const infoQuery = `SELECT name FROM workflow_entity WHERE id = ?`;
+
+        const [dist, sources, raw, info] = await Promise.all([
+            localDb.query(distributionQuery, [id]),
+            localDb.query(sourceQuery, [id]),
+            localDb.query(rawQuery, [id]),
+            localDb.query(infoQuery, [id])
+        ]);
+
+        if (info.rows.length === 0) {
+            return res.status(404).json({ error: 'Workflow not found' });
+        }
+
+        res.json({
+            workflowName: info.rows[0].name,
+            nodeDistribution: dist.rows,
+            sourceDistribution: sources.rows,
+            rawErrors: raw.rows
+        });
+
+    } catch (err) {
+        console.error('[BACKEND] Workflow Drilldown Failed:', err);
+        res.status(500).json({ error: 'Failed to fetch workflow drilldown data' });
     }
 };

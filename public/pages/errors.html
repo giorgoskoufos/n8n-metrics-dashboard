@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Error Intelligence - n8n Dashboard</title>
+    <script src="../logic/guard.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'n8n-primary': '#ff6f5c',
+                        'n8n-dark': '#121212',
+                        'n8n-card': '#1a1a1a',
+                        'n8n-text': '#eeeeee',
+                        'n8n-success': '#4ade80',
+                        'n8n-danger': '#f87171',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Open Sans', sans-serif;
+            background-color: #121212;
+            color: #eeeeee;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 4px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #444;
+        }
+    </style>
+</head>
+
+<body class="p-4 md:p-8">
+    <!-- Backdrop Overlay -->
+    <div id="burgerOverlay"
+        class="fixed inset-0 bg-n8n-dark/40 backdrop-blur-md z-40 hidden opacity-0 transition-opacity duration-300">
+    </div>
+
+    <div class="max-w-7xl mx-auto">
+        <header class="flex flex-row justify-between items-center mb-8 gap-4 relative z-50">
+            <div class="relative">
+                <button id="burgerBtn"
+                    class="p-3 text-gray-400 hover:text-white transition-colors bg-n8n-card border border-gray-700 rounded-lg focus:outline-none flex items-center justify-center">
+                    <i class="fa-solid fa-bars fa-fw text-lg"></i>
+                </button>
+                <div id="burgerMenu"
+                    class="absolute left-0 mt-2 w-56 bg-n8n-card border border-gray-700 rounded-lg shadow-2xl hidden flex-col z-50 overflow-hidden divide-y divide-gray-800">
+                    <a href="../index.html"
+                        class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
+                        <i class="fa-solid fa-chart-pie fa-fw mr-3 w-4"></i>Dashboard
+                    </a>
+                    <a href="errors.html" class="px-4 py-3 text-sm text-white bg-gray-800 flex items-center">
+                        <i class="fa-solid fa-triangle-exclamation fa-fw mr-3 w-4 text-red-400"></i>Error Analytics
+                    </a>
+                    <a href="roi.html"
+                        class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
+                        <i class="fa-solid fa-clock fa-fw mr-3 w-4 text-green-400"></i>ROI Analytics
+                    </a>
+                    <a href="settings.html"
+                        class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
+                        <i class="fa-solid fa-gear fa-fw mr-3 w-4 text-gray-400"></i>Settings
+                    </a>
+                </div>
+            </div>
+            <div class="text-right">
+                <h1 class="text-xl md:text-2xl font-bold text-white">Error Intelligence</h1>
+                <p class="text-xs md:text-sm text-gray-400">Surgical Analytics & Hotspots</p>
+            </div>
+        </header>
+
+        <!-- Headline Stats -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-n8n-card p-6 rounded-xl border border-gray-800 relative overflow-hidden">
+                <p class="text-gray-400 text-[10px] uppercase font-bold tracking-widest mb-1">Total Failures (7d)</p>
+                <h2 id="cardTotalErrors" class="text-3xl font-bold text-n8n-danger">0</h2>
+                <div class="absolute top-0 right-0 p-4 opacity-10"><i class="fa-solid fa-bug text-4xl"></i></div>
+            </div>
+            <div class="bg-n8n-card p-6 rounded-xl border border-gray-800 relative overflow-hidden">
+                <p class="text-gray-400 text-[10px] uppercase font-bold tracking-widest mb-1">Unique Failing Nodes</p>
+                <h2 id="cardUniqueNodes" class="text-3xl font-bold text-white">0</h2>
+                <div class="absolute top-0 right-0 p-4 opacity-10"><i class="fa-solid fa-microchip text-4xl"></i></div>
+            </div>
+            <div class="bg-n8n-card p-6 rounded-xl border border-gray-800 relative overflow-hidden">
+                <p class="text-gray-400 text-[10px] uppercase font-bold tracking-widest mb-1">Affected Workflows</p>
+                <h2 id="cardWorkflows" class="text-3xl font-bold text-indigo-400">0</h2>
+                <div class="absolute top-0 right-0 p-4 opacity-10"><i class="fa-solid fa-sitemap text-4xl"></i></div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
+            <!-- Table 0: Workflow Analyzer (Drilldown) -->
+            <div
+                class="lg:col-span-2 bg-n8n-card rounded-xl border border-gray-800 overflow-hidden flex flex-col h-[500px]">
+                <div
+                    class="p-4 border-b border-gray-800 bg-black/20 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                    <h3 class="text-sm font-bold text-gray-300">Workflow Analyzer</h3>
+                    <div class="flex items-center gap-2">
+                        <button onclick="downloadDrilldown('csv')"
+                            class="text-[10px] bg-gray-800 hover:bg-gray-700 text-gray-400 px-2 py-1 rounded border border-gray-700 transition-colors">CSV</button>
+                        <button onclick="downloadDrilldown('json')"
+                            class="text-[10px] bg-gray-800 hover:bg-gray-700 text-gray-400 px-2 py-1 rounded border border-gray-700 transition-colors">JSON</button>
+                    </div>
+                </div>
+                <div class="p-4 border-b border-gray-800 bg-black/10">
+                    <select id="workflowDrilldownSelector" onchange="fetchWorkflowDrilldown(this.value)"
+                        class="w-full bg-n8n-dark border border-gray-700 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-n8n-primary transition-colors cursor-pointer">
+                        <option value="">Select a workflow to analyze...</option>
+                    </select>
+                </div>
+                <div
+                    class="flex-1 flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-gray-800 relative min-h-0">
+                    <!-- Left: Pie Chart -->
+                    <div class="flex-1 p-4 flex flex-col items-center justify-center relative min-h-[250px] w-full">
+                        <div id="chartEmptyState" class="text-center text-gray-600 pt-16">
+                            <i class="fa-solid fa-chart-pie text-4xl mb-3 opacity-20 block"></i>
+                            <p class="text-xs italic">Select a workflow first</p>
+                        </div>
+                        <canvas id="workflowPieChart" class="hidden"></canvas>
+                    </div>
+                    <!-- Right: Brittle Sources (specific to this workflow) -->
+                    <div
+                        class="w-full md:w-64 bg-black/10 p-4 flex flex-col overflow-y-auto custom-scrollbar shadow-inner">
+                        <h4 class="text-[10px] uppercase font-bold text-gray-500 tracking-widest mb-4">Brittle Sources
+                        </h4>
+                        <div id="drilldownSourceContent" class="space-y-4">
+                            <p class="text-[10px] text-gray-600 italic">No workflow selected.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Table 1: Global Node Hotspots -->
+            <div class="bg-n8n-card rounded-xl border border-gray-800 overflow-hidden flex flex-col h-[500px]">
+                <div class="p-4 border-b border-gray-800 bg-black/20">
+                    <h3 class="text-xs font-bold text-gray-300 uppercase tracking-tight">Global Node Hotspots</h3>
+                </div>
+                <div class="overflow-y-auto flex-1 custom-scrollbar">
+                    <table class="w-full text-left">
+                        <thead class="bg-black/40 sticky top-0 z-10">
+                            <tr class="text-gray-500 text-[10px] uppercase tracking-wider font-bold">
+                                <th class="p-4">Node</th>
+                                <th class="p-4 text-right">Failures</th>
+                            </tr>
+                        </thead>
+                        <tbody id="nodeHotspotsBody" class="divide-y divide-gray-800/50">
+                            <tr>
+                                <td colspan="2" class="p-8 text-center text-gray-500 text-sm italic">Loading
+                                    intelligence...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-n8n-card rounded-xl border border-gray-800 overflow-hidden mb-8">
+            <div class="p-4 border-b border-gray-800 bg-black/20">
+                <h3 class="text-sm font-bold text-gray-300">Live Error Intelligence Feed</h3>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                    <thead class="bg-black/40">
+                        <tr class="text-gray-500 text-[10px] uppercase tracking-wider font-bold">
+                            <th class="p-4">Workflow & Time</th>
+                            <th class="p-4 w-48">Failing Node</th>
+                            <th class="p-4">Error Message</th>
+                            <th class="p-4 text-right">Trace</th>
+                        </tr>
+                    </thead>
+                    <tbody id="errorFeedBody" class="divide-y divide-gray-800/50">
+                        <tr>
+                            <td colspan="4" class="p-12 text-center text-gray-500 text-sm italic">Waiting for incoming
+                                error metadata...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Error Modal Sync (from index.html) -->
+    <div id="errorModal"
+        class="fixed inset-0 bg-black/95 backdrop-blur-md z-[9999] hidden items-center justify-center p-4 overflow-y-auto">
+        <div class="bg-n8n-card border border-gray-700 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl my-auto"
+            id="modalContainer">
+            <div class="p-6 border-b border-gray-800 flex justify-between items-center bg-black/20">
+                <div class="flex items-center gap-3">
+                    <div
+                        class="w-10 h-10 bg-red-900/40 rounded-lg flex items-center justify-center border border-red-500/30">
+                        <i class="fa-solid fa-triangle-exclamation text-red-400"></i>
+                    </div>
+                    <div>
+                        <h2 class="text-lg font-bold">Surgical Error Snapshot</h2>
+                        <p class="text-[10px] text-gray-500 uppercase tracking-widest font-semibold"
+                            id="modalTimestamp">--</p>
+                    </div>
+                </div>
+                <button onclick="closeErrorModal()" class="text-gray-500 hover:text-white transition-colors p-2">
+                    <i class="fa-solid fa-xmark text-xl"></i>
+                </button>
+            </div>
+            <div class="p-8">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+                    <div>
+                        <label class="block text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-1">Failing
+                            Node</label>
+                        <div id="modalNodeName"
+                            class="text-white font-semibold text-sm bg-black/30 p-3 rounded border border-gray-800">--
+                        </div>
+                    </div>
+                    <div>
+                        <label
+                            class="block text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-1">Execution
+                            ID</label>
+                        <div id="modalExecId"
+                            class="text-gray-400 font-mono text-sm bg-black/30 p-3 rounded border border-gray-800">--
+                        </div>
+                    </div>
+                </div>
+                <label class="block text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-1">Error
+                    Description</label>
+                <div id="modalErrorMessage"
+                    class="bg-red-900/10 p-4 rounded-lg border border-red-500/20 text-red-400 font-mono text-xs leading-relaxed mb-8 max-h-[300px] overflow-y-auto whitespace-pre-wrap">
+                    Loading...</div>
+
+                <div class="flex justify-between items-center">
+                    <p class="text-[11px] text-gray-500 italic"><i
+                            class="fa-solid fa-lightbulb text-indigo-400 mr-1"></i> Use raw trace for deep node state
+                        inspection</p>
+                    <button onclick="fetchDetailedError(currentExecId)"
+                        class="px-5 py-2.5 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-xs font-bold transition-all border border-gray-700">Fetch
+                        Raw Trace</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="../logic/errors.js"></script>
+    <script>
+        // Copy-Paste Burger Logic for speed
+        const burgerBtn = document.getElementById('burgerBtn');
+        const burgerMenu = document.getElementById('burgerMenu');
+        const burgerOverlay = document.getElementById('burgerOverlay');
+        function toggleMenu(show) {
+            if (show) {
+                burgerMenu.classList.remove('hidden'); burgerMenu.classList.add('flex'); burgerOverlay.classList.remove('hidden'); setTimeout(() => burgerOverlay.classList.add('opacity-100'), 10);
+            } else { burgerMenu.classList.add('hidden'); burgerMenu.classList.remove('flex'); burgerOverlay.classList.remove('opacity-100'); setTimeout(() => burgerOverlay.classList.add('hidden'), 300); }
+        }
+        burgerBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(burgerMenu.classList.contains('hidden')); });
+        document.addEventListener('click', (e) => { if (!burgerBtn.contains(e.target) && !burgerMenu.contains(e.target)) toggleMenu(false); });
+    </script>
+</body>
+
+</html>

@@ -69,3 +69,22 @@ Upgraded the open-source dashboard to feature n8n "Insights" capabilities, with 
 - **Telemetry Dampening & Forecasting**:
     - Hardened the real-time Line Chart architecture against extreme drop-offs natively occurring in partial time groupings.
     - Developed an Active-Bucket Extrapolation logic engine dynamically dividing active time fractional volume vs complete historical moving averages.
+
+---
+
+## 9. Error Intelligence & Workflow Diagnostics (Latest)
+Successfully pivoted the Error analytics framework from a bird's-eye view to a high-precision, surgical diagnostic tool.
+
+- **Unified Workflow Analyzer**:
+    - Centralized workflow error deep-dives. Selection of any workflow now triggers a real-time retrieval of its specific failure signature.
+    - Optimized the UI grid (3-column layout) to fit Global Hotspots alongside the Drilldown.
+- **Surgical Brittle-Path Logic**:
+    - Relocated "Brittle Origins" from a global, cluttered table to a Tailored Sidebar within the Analyzer.
+    - Backend updated (`metricsController.js`) to provide source-node distribution filtered per workflow, showing exactly which upstream node/output branch triggered a downstream error.
+- **Visual Intelligence (Chart.js)**:
+    - Standardized the Error Doughnut Chart with a **58% cutout** for high-impact visibility. 
+    - Implemented **descender-safe legend padding** (25px) to prevent vertical character clipping on long node names.
+- **Diagnostic Export Engine**:
+    - Built one-click **CSV/JSON extractors** that package both failing node data and upstream branch origins into portable audit logs.
+- **Mobile-First Responsive Audit**:
+    - Reworked card height dynamics (`h-auto` transitions) and implemented robust horizontal table scrolling (`min-w-[700px]`) to maintain 100% diagnostic usability on mobile devices.

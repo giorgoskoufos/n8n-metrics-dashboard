@@ -36,7 +36,8 @@ This dashboard provides a robust alternative for the independent user:
 - **Real-time Metrics**: Monitor total executions, error counts, and average runtimes.
 - **ROI Analytics**: Track workflow automation value by assigning manual time-saved metrics and hourly rates, complete with period-over-period financial trend comparisons.
 - **Execution Timeline**: Visual breakdown of successes vs. errors over 24h, 48h, or 7 days with active-bucket line forecasting to prevent artificial drop-offs.
-- **Error Hotspots**: Identify which workflows are failing the most.
+- **Error Intelligence**: Surgical node-level failure analysis. Identify not just *what* failed, but the specific upstream "brittle path" origins that triggered the crash.
+- **Deep-Linking**: One-click navigation from the dashboard directly into the failing n8n workflow editor.
 - **AI Analytics Assistant**: A natural language interface to query your data (e.g., "Which workflow was the slowest yesterday?").
 - **Secure by Design**: Built-in authentication, rate limiting, and strict Content Security Policies.
 
@@ -119,8 +120,24 @@ The dashboard integrates directly with your existing n8n user base. There is no 
 
 ---
 
-## 🏗️ Dashboard Database Engine
+---
 
+## 🔍 Advanced Diagnostics: The Error Drilldown
+The dashboard provides a dedicated **Error Intelligence** suite:
+- **Workflow Analyzer**: Selection of a specific workflow renders a node failure distribution chart (Doughnut).
+- **Brittle Sources**: Identifies the specific upstream "Origin Nodes" and output branches that lead to errors, allowing you to fix structural logic before it crashes.
+- **Audit Extracts**: Full CSV/JSON data exports containing execution IDs, error stacks, and metadata for external compliance logs.
+
+---
+
+## 🚧 Retention & Performance Tuning
+By default, n8n prunes execution data frequently. To visualize long-term trends:
+- **Increase Max Age**: Set `EXECUTIONS_DATA_MAX_AGE` to `180`+ days.
+- **Save Debug Errors**: The dashboard supports a `SAVE_DEBUG_ERRORS=true` environment variable to capture deep JSON traces for AI interrogation.
+
+---
+
+## 🏗️ Dashboard Database Engine
 > [!TIP]
 > **Zero Configuration Required**
 > The dashboard uses a sophisticated ETL (Extract, Transform, Load) pipeline to automatically sync the necessary analytics data from Postgres into a local SQLite `/dashboard.sqlite` database. This ensures your production n8n database is entirely protected from heavy analytical queries and AI text-to-SQL logic.

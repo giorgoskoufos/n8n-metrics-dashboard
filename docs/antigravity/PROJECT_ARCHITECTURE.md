@@ -42,5 +42,8 @@ Runs as a background cron worker (driven by `node-cron` in `server.js`).
 - **Chat Widget**: Fluid resizing and robust visual viewport listeners for iOS keyboards.
 - **Manual Sync Engine**: A spinning "Sync Data" button wired directly to the `metricsRoute` to bypass local cron schedules.
 
-## 6. Health & DevOps Subsystem
-- **`/healthz` Endpoint**: An unauthenticated, raw `SELECT 1` heartbeat probe connecting exclusively to the n8n Postgres instance. Enables zero-dependency continuous monitoring via Uptime Kuma or native Docker orchestration platforms.
+## 7. Error Intelligence Hub
+A specialized diagnostic subsystem for high-precision troubleshooting.
+- **Workflow Analyzer**: A drilldown engine that retrieves node failure distributions for specific workflows. 
+- **Brittle Source Diagnostics**: An upstream traversal engine that identifies "origin nodes" responsible for downstream crashes. It analyzes branch-level failure rates (e.g., Output 0 vs. Output 1) to identify structural weaknesses.
+- **Data Mobility**: Features an on-demand export engine that generates CSV/JSON payloads, bridges analytical findings to external triage tools (Jira/Sentry).
