@@ -48,9 +48,15 @@ function initDb() {
             CREATE TABLE IF NOT EXISTS workflow_settings (
                 workflow_id TEXT PRIMARY KEY,
                 saved_time_seconds INTEGER DEFAULT 0,
+                hourly_rate REAL DEFAULT 0,
                 FOREIGN KEY (workflow_id) REFERENCES workflow_entity (id) ON DELETE CASCADE
             )
         `);
+
+        // Migration: add hourly_rate if it doesn't exist
+        localDb.run(`ALTER TABLE workflow_settings ADD COLUMN hourly_rate REAL DEFAULT 0`, (err) => {
+            // Silence the duplicate column error on startup
+        });
 
         // Execution Entity Replica
         localDb.run(`

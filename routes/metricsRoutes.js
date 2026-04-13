@@ -11,6 +11,7 @@ router.get('/execution-error/:id', authenticateToken, metricsController.getExecu
 router.post('/sync/force', authenticateToken, metricsController.forceSync);
 
 // Insights & ROI
+router.get('/n8n-health', authenticateToken, metricsController.getN8nHealth);
 router.get('/settings/roi', authenticateToken, metricsController.getSettings);
 router.post('/settings/roi', authenticateToken, metricsController.updateSettings);
 router.get('/analytics/roi', authenticateToken, metricsController.getRoiMetrics);

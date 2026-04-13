@@ -5,15 +5,44 @@
 // --- SECTION 1: GLOBALS ---
 let lineChart = null;
 let doughnutChart = null;
-Chart.defaults.font.family = "'Open Sans', sans-serif";
-Chart.defaults.color = '#eeeeee';
+if (typeof Chart !== 'undefined') {
+    Chart.defaults.font.family = "'Open Sans', sans-serif";
+    Chart.defaults.color = '#eeeeee';
+}
 let currentTab = 'executions'; // Default active tab        
 
 let currentOffset = 0;
 const LIMIT = 20;
 let isFetchingExecutions = false;
 
-// --- SECTION 1.5: AUTHENTICATION HELPER ---
+// --- SECTION 1.5: HEALTH CHECK HELPER ---
+async function checkN8nHealth() {
+    const healthContainer = document.getElementById('n8nHealthIndicator');
+    if (!healthContainer) return;
+    
+    try {
+        const res = await fetchWithAuth('/api/n8n-health');
+        if (res.ok) {
+            const data = await res.json();
+            if (data.status === 'ok') {
+                healthContainer.innerHTML = `<span class="flex h-2 w-2 relative mr-2">
+  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+  <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+</span> <span class="text-[10px] text-green-400 font-bold tracking-widest uppercase">n8n Online</span>`;
+                return;
+            }
+        }
+        throw new Error();
+    } catch(e) {
+        healthContainer.innerHTML = `<span class="flex h-2 w-2 relative mr-2">
+  <span class="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+</span> <span class="text-[10px] text-red-500 font-bold tracking-widest uppercase">n8n Offline</span>`;
+    }
+}
+
+document.addEventListener('DOMContentLoaded', checkN8nHealth);
+
+// --- SECTION 1.7: AUTHENTICATION HELPER ---
 async function fetchWithAuth(url, options = {}) {
     const token = localStorage.getItem('n8n_auth_token');
     

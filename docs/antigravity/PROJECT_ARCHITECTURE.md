@@ -21,8 +21,8 @@ Only utilized for highly specific, non-blocking queries:
 ### SQLite (`/config/localDb.js` -> `dashboard.sqlite`)
 The isolated analytical brain.
 - **Schema Mapping**: Generates clean replicas of `workflow_entity` and `execution_entity`. We explicitly **drop** sensitive configuration payloads (`nodes`), rendering secret-leakage physically impossible.
-- **State**: Stores `users` mappings and `dashboard_chat_history`.
-- All Chart.js metric polling and AI Text-to-SQL logic routes strictly to this file. 
+- **Configuration & State**: Stores `users` mappings, conversational `dashboard_chat_history`, and custom user `workflow_settings` (mapping the manual configuration of time-saved per workflow and relative hourly rates for monetary calculation).
+- All Chart.js metric polling, ROI mathematical aggregations, and AI Text-to-SQL queries strictly route to this file. Native telemetry logic normalizes real-time time-series bucketing using active-bucket extrapolation to prevent chart line-drops.
 
 ## 3. The ETL Sync Engine (`/config/syncJob.js`)
 Runs as a background cron worker (driven by `node-cron` in `server.js`).
@@ -38,5 +38,9 @@ Runs as a background cron worker (driven by `node-cron` in `server.js`).
 
 ## 5. Frontend & UI
 - **Authentication Guard (`logic/guard.js`)**: A synchronous IIFE that blocks rendering globally minus a valid JWT.
+- **Dynamic Navigation**: A fully stateful, context-aware mobile Burger Menu engineered with backdrop blurs governing the multi-page Analytics environment.
 - **Chat Widget**: Fluid resizing and robust visual viewport listeners for iOS keyboards.
 - **Manual Sync Engine**: A spinning "Sync Data" button wired directly to the `metricsRoute` to bypass local cron schedules.
+
+## 6. Health & DevOps Subsystem
+- **`/healthz` Endpoint**: An unauthenticated, raw `SELECT 1` heartbeat probe connecting exclusively to the n8n Postgres instance. Enables zero-dependency continuous monitoring via Uptime Kuma or native Docker orchestration platforms.

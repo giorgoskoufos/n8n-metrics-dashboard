@@ -25,7 +25,12 @@
         }
     </script>
     <style>
+        :root { color-scheme: dark; }
         body { background-color: #171717; color: #eeeeee; -webkit-font-smoothing: antialiased; }
+        
+        /* Select styling fixes for visibility */
+        select { color-scheme: dark; }
+        select option { background-color: #222222; color: #eeeeee; }
     </style>
     <link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
     <link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32x32.png">
@@ -56,6 +61,9 @@
                     <button onclick="logout()" class="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-red-900/30 hover:text-red-300 transition-colors flex items-center bg-red-900/10">
                         <i class="fa-solid fa-right-from-bracket fa-fw mr-3 w-4"></i>Logout
                     </button>
+                    <div id="n8nHealthIndicator" class="px-4 py-3 border-t border-gray-800 flex items-center bg-black/40 text-[10px] text-gray-500 justify-center uppercase tracking-widest font-semibold">
+                        <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Checking
+                    </div>
                 </div>
             </div>
             <div class="text-right">
@@ -77,14 +85,43 @@
             </button>
 
             <!-- Accordion Content -->
-            <div id="roiContent" class="hidden border-t border-gray-800 p-6 transition-all duration-300">
-                <p class="text-sm text-gray-400 mb-6 font-medium">Specify how much manual time (in seconds) is saved each time a workflow executes successfully. This is used to calculate the Total ROI in the Analytics dashboard.</p>
+            <div id="roiContent" class="hidden border-t border-gray-800 p-6 transition-all duration-300 relative">
+                <div class="flex flex-col sm:flex-row items-start gap-2 mb-6">
+                    <p class="text-sm text-gray-400 font-medium flex-1">Assign a monetary and time replacement value for each workflow. The Wizard Calculator can help you seamlessly translate human labor parameters into precise n8n micro-metrics.</p>
+                    <div class="relative group cursor-pointer inline-flex items-center mt-2 sm:mt-0">
+                        <i class="fa-solid fa-circle-info text-indigo-400 text-lg sm:text-base"></i><span class="ml-2 text-indigo-400 text-sm sm:hidden font-medium">How it works</span>
+                        <div class="absolute z-50 right-0 top-8 w-72 bg-[#1a1a1a] border border-gray-700 text-gray-300 text-xs rounded-lg shadow-2xl p-4 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 pointer-events-none leading-relaxed">
+                            <strong class="text-white block mb-2 text-sm border-b border-gray-800 pb-2">How ROI Tracking Works</strong>
+                            <div class="space-y-2">
+                                <p><strong class="text-indigo-400">1. Setup Wage:</strong> Define the hourly cost of the manual labor being replaced.</p>
+                                <p><strong class="text-indigo-400">2. Use the Wizard:</strong> Tell the system how often humans used to perform this task (e.g. 5 times a week). The tool will intelligently fetch your n8n execution volume from the last 30 days to calculate a perfectly scaled "Seconds per Execution" logic ratio.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 
+                <!-- Search & Sort Toolbar -->
+                <div class="flex flex-col sm:flex-row gap-3 mb-6 justify-between items-center bg-n8n-dark/50 p-3 rounded-lg border border-gray-800 isolate">
+                    <div class="relative w-full sm:w-1/2">
+                        <i class="fa-solid fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500"></i>
+                        <input type="text" id="workflowSearch" placeholder="Search workflows..." class="w-full bg-[#171717] border border-gray-700 rounded-lg pl-9 pr-4 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors">
+                    </div>
+                    <div class="flex items-center gap-3 w-full sm:w-auto">
+                        <span class="text-xs text-gray-400 whitespace-nowrap">Sort by:</span>
+                        <select id="workflowSort" class="bg-[#171717] border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 cursor-pointer w-full sm:w-auto">
+                            <option value="name_asc">Name (A-Z)</option>
+                            <option value="name_desc">Name (Z-A)</option>
+                            <option value="execs_desc">Executions (High to Low)</option>
+                            <option value="time_desc">Time Configured (High to Low)</option>
+                        </select>
+                    </div>
+                </div>
+
                 <div id="settingsContainer" class="flex flex-col gap-3">
                     <div class="text-center py-8 text-gray-500 text-sm"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Loading workflows...</div>
                 </div>
 
-                <div class="mt-8 flex justify-end">
+                <div class="mt-8 flex justify-end sticky bottom-0 bg-n8n-card pt-4 pb-2 z-10 border-t border-gray-800">
                     <button id="saveBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-8 rounded-lg transition-all flex items-center gap-2 shadow-lg disabled:opacity-50">
                         <i class="fa-solid fa-floppy-disk"></i> Save Settings
                     </button>
@@ -93,6 +130,11 @@
         </section>
 
     </div>
+
+    <!-- Floating Jump Button -->
+    <button id="jumpBtn" class="fixed bottom-6 right-6 bg-gray-800 hover:bg-gray-700 text-white rounded-full w-14 h-14 flex items-center justify-center shadow-2xl transition-all border border-gray-600 z-50 focus:outline-none hidden opacity-0">
+        <i class="fa-solid fa-arrow-down transform transition-transform" id="jumpIcon"></i>
+    </button>
 
     <!-- Scripts -->
     <script src="../logic/app.js"></script>

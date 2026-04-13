@@ -106,6 +106,38 @@ exports.getMetrics = async (req, res) => {
         if (prevError > 0) trend_error_pct = ((currentError - prevError) / prevError) * 100;
         if (prevError === 0 && currentError > 0) trend_error_pct = 100;
 
+        // Active-Bucket Extrapolation -> Normalize the final interval drop-off on line charts
+        if (hourly.rows.length > 2) {
+            const lastRow = hourly.rows[hourly.rows.length - 1];
+            const p1 = hourly.rows[hourly.rows.length - 2].success_count || 0;
+            const p2 = hourly.rows[hourly.rows.length - 3].success_count || 0;
+            const avgPrevious = (p1 + p2) / 2.0;
+
+            const now = new Date();
+            
+            if (timeRange === '7d') {
+                const hoursPassed = now.getHours() + (now.getMinutes() / 60.0);
+                if (hoursPassed > 0 && hoursPassed < 23) {
+                    const factor = hoursPassed > 4 ? (24.0 / hoursPassed) : null;
+                    if (!factor) lastRow.success_count = Math.round(avgPrevious);
+                    else {
+                        const projected = lastRow.success_count * factor;
+                        lastRow.success_count = Math.round((projected + avgPrevious) / 2);
+                    }
+                }
+            } else {
+                const minsPassed = now.getMinutes();
+                if (minsPassed > 0 && minsPassed < 58) {
+                    const factor = minsPassed > 5 ? (60.0 / minsPassed) : null;
+                    if (!factor) lastRow.success_count = Math.round(avgPrevious);
+                    else {
+                        const projected = lastRow.success_count * factor;
+                        lastRow.success_count = Math.round((projected + avgPrevious) / 2);
+                    }
+                }
+            }
+        }
+
         res.json({
             summary: { ...stats.rows[0], trend_total_pct, trend_error_pct },
             hourlyData: hourly.rows,
@@ -242,12 +274,46 @@ exports.forceSync = async (req, res) => {
 
 // --- INSIGHTS & ROI METHODS ---
 
+exports.getN8nHealth = async (req, res) => {
+    try {
+        const baseUrl = process.env.N8N_EDITOR_BASE_URL;
+        if (!baseUrl) return res.status(500).json({ status: 'error', message: 'N8N_EDITOR_BASE_URL not configured' });
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500);
+        
+        const response = await fetch(`${baseUrl}/healthz`, {
+            method: 'GET',
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        
+        if (response.ok) {
+            const data = await response.json();
+            if (data.status === 'ok') {
+                return res.json({ status: 'ok' });
+            }
+        }
+        res.status(500).json({ status: 'error' });
+    } catch (err) {
+        res.status(500).json({ status: 'error' });
+    }
+};
+
 exports.getSettings = async (req, res) => {
     try {
         const query = `
-            SELECT w.id, w.name, COALESCE(s.saved_time_seconds, 0) as saved_time_seconds
+            SELECT 
+                w.id, 
+                w.name, 
+                COALESCE(s.saved_time_seconds, 0) as saved_time_seconds,
+                COALESCE(s.hourly_rate, 0) as hourly_rate,
+                COUNT(e.id) as execution_count,
+                SUM(CASE WHEN e.status = 'success' AND datetime(e."startedAt") >= datetime('now', '-30 days', 'localtime') THEN 1 ELSE 0 END) as executions_30d
             FROM workflow_entity w
             LEFT JOIN workflow_settings s ON w.id = s.workflow_id
+            LEFT JOIN execution_entity e ON w.id = e."workflowId" AND e.status = 'success'
+            GROUP BY w.id, w.name, s.saved_time_seconds, s.hourly_rate
             ORDER BY w.name ASC
         `;
         const result = await localDb.query(query);
@@ -266,10 +332,10 @@ exports.updateSettings = async (req, res) => {
         await localDb.execute('BEGIN TRANSACTION');
         for (const s of settings) {
             await localDb.execute(
-                `INSERT INTO workflow_settings (workflow_id, saved_time_seconds) 
-                 VALUES (?, ?) 
-                 ON CONFLICT(workflow_id) DO UPDATE SET saved_time_seconds=excluded.saved_time_seconds`, 
-                 [s.workflow_id, s.saved_time_seconds]
+                `INSERT INTO workflow_settings (workflow_id, saved_time_seconds, hourly_rate) 
+                 VALUES (?, ?, ?) 
+                 ON CONFLICT(workflow_id) DO UPDATE SET saved_time_seconds=excluded.saved_time_seconds, hourly_rate=excluded.hourly_rate`, 
+                 [s.workflow_id, s.saved_time_seconds, s.hourly_rate || 0]
             );
         }
         await localDb.execute('COMMIT');
@@ -283,26 +349,43 @@ exports.updateSettings = async (req, res) => {
 
 exports.getRoiMetrics = async (req, res) => {
     try {
+        const { timeRange } = req.query;
+        let timeFilter = "";
+        
+        if (timeRange && timeRange !== 'all') {
+            const now = new Date();
+            let lookbackHours = 24;
+            if (timeRange === '48h') lookbackHours = 48;
+            if (timeRange === '7d') lookbackHours = 168;
+            if (timeRange === '30d') lookbackHours = 720;
+            
+            const pastDateStr = new Date(now.getTime() - (lookbackHours * 60 * 60 * 1000)).toISOString();
+            // Using e."startedAt", since datetime(e."startedAt") is used in getMetrics
+            timeFilter = ` AND datetime(e."startedAt") >= datetime('${pastDateStr}')`;
+        }
+
         const totalQuery = `
             SELECT 
                 COUNT(e.id) as total_executions,
-                SUM(COALESCE(s.saved_time_seconds, 0)) as total_time_saved_seconds
+                SUM(COALESCE(s.saved_time_seconds, 0)) as total_time_saved_seconds,
+                SUM((COALESCE(s.saved_time_seconds, 0) / 3600.0) * COALESCE(s.hourly_rate, 0)) as total_money_saved
             FROM execution_entity e
             JOIN workflow_entity w ON e."workflowId" = w.id
             LEFT JOIN workflow_settings s ON w.id = s.workflow_id
-            WHERE e.status = 'success'
+            WHERE e.status = 'success'${timeFilter}
         `;
         
         const workflowsQuery = `
             SELECT 
                 w.name,
                 COUNT(e.id) as executions,
-                (COUNT(e.id) * COALESCE(s.saved_time_seconds, 0)) as time_saved_seconds
+                (COUNT(e.id) * COALESCE(s.saved_time_seconds, 0)) as time_saved_seconds,
+                (COUNT(e.id) * (COALESCE(s.saved_time_seconds, 0) / 3600.0) * COALESCE(s.hourly_rate, 0)) as money_saved
             FROM execution_entity e
             JOIN workflow_entity w ON e."workflowId" = w.id
             LEFT JOIN workflow_settings s ON w.id = s.workflow_id
-            WHERE e.status = 'success'
-            GROUP BY w.id, w.name
+            WHERE e.status = 'success'${timeFilter}
+            GROUP BY w.id, w.name, s.saved_time_seconds, s.hourly_rate
             HAVING time_saved_seconds > 0
             ORDER BY time_saved_seconds DESC
         `;

@@ -34,7 +34,8 @@ This dashboard provides a robust alternative for the independent user:
 
 ## 🚀 Key Features
 - **Real-time Metrics**: Monitor total executions, error counts, and average runtimes.
-- **Execution Timeline**: Visual breakdown of successes vs. errors over 24h, 48h, or 7 days.
+- **ROI Analytics**: Track workflow automation value by assigning manual time-saved metrics and hourly rates, complete with period-over-period financial trend comparisons.
+- **Execution Timeline**: Visual breakdown of successes vs. errors over 24h, 48h, or 7 days with active-bucket line forecasting to prevent artificial drop-offs.
 - **Error Hotspots**: Identify which workflows are failing the most.
 - **AI Analytics Assistant**: A natural language interface to query your data (e.g., "Which workflow was the slowest yesterday?").
 - **Secure by Design**: Built-in authentication, rate limiting, and strict Content Security Policies.
