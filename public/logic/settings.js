@@ -9,6 +9,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     const jumpIcon = document.getElementById('jumpIcon');
 
     let allWorkflows = [];
+    let globalSettings = {};
+
+    // Fetch Global Settings
+    try {
+        const res = await fetchWithAuth('/api/settings');
+        if (res.ok) {
+            globalSettings = await res.json();
+            if (globalSettings.timezone) {
+                document.getElementById('timezoneSelect').value = globalSettings.timezone;
+            }
+        }
+    } catch (err) { console.error("Failed to load global settings", err); }
 
     // Fetch Settings
     try {
@@ -210,45 +222,81 @@ document.addEventListener('DOMContentLoaded', async () => {
     searchInput?.addEventListener('input', renderWorkflows);
     sortSelect?.addEventListener('change', renderWorkflows);
 
-    // Save Settings
-    saveBtn.addEventListener('click', async () => {
-        saveBtn.disabled = true;
-        saveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+    // Save ROI Settings
+    if (saveBtn) {
+        saveBtn.addEventListener('click', async () => {
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
 
-        // We use 'allWorkflows' as the source of truth because inputs map to it.
-        const settings = allWorkflows.map(wf => ({
-            workflow_id: wf.id,
-            saved_time_seconds: parseInt(wf.saved_time_seconds) || 0,
-            hourly_rate: parseFloat(wf.hourly_rate) || 0
-        }));
+            // We use 'allWorkflows' as the source of truth because inputs map to it.
+            const settings = allWorkflows.map(wf => ({
+                workflow_id: wf.id,
+                saved_time_seconds: parseInt(wf.saved_time_seconds) || 0,
+                hourly_rate: parseFloat(wf.hourly_rate) || 0
+            }));
 
-        try {
-            const res = await fetchWithAuth('/api/settings/roi', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ settings })
-            });
+            try {
+                const res = await fetchWithAuth('/api/settings/roi', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ settings })
+                });
 
-            if (!res.ok) throw new Error("Failed to save");
+                if (!res.ok) throw new Error("Failed to save");
 
-            saveBtn.classList.replace('bg-indigo-600', 'bg-green-600');
-            saveBtn.classList.replace('hover:bg-indigo-500', 'hover:bg-green-500');
-            saveBtn.innerHTML = '<i class="fa-solid fa-check"></i> Saved!';
-            
-            setTimeout(() => {
-                saveBtn.classList.replace('bg-green-600', 'bg-indigo-600');
-                saveBtn.classList.replace('hover:bg-green-500', 'hover:bg-indigo-500');
-                saveBtn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Save Settings';
+                saveBtn.classList.replace('bg-indigo-600', 'bg-green-600');
+                saveBtn.classList.replace('hover:bg-indigo-500', 'hover:bg-green-500');
+                saveBtn.innerHTML = '<i class="fa-solid fa-check"></i> Saved!';
+                
+                setTimeout(() => {
+                    saveBtn.classList.replace('bg-green-600', 'bg-indigo-600');
+                    saveBtn.classList.replace('hover:bg-green-500', 'hover:bg-indigo-500');
+                    saveBtn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Save Settings';
+                    saveBtn.disabled = false;
+                }, 2000);
+
+            } catch (err) {
+                console.error(err);
+                alert("Error saving settings.");
                 saveBtn.disabled = false;
-            }, 2000);
+                saveBtn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Save Settings';
+            }
+        });
+    }
 
-        } catch (err) {
-            console.error(err);
-            alert("Error saving settings.");
-            saveBtn.disabled = false;
-            saveBtn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Save Settings';
-        }
-    });
+    // Save Preference Logic
+    const savePrefsBtn = document.getElementById('savePrefsBtn');
+    if (savePrefsBtn) {
+        savePrefsBtn.addEventListener('click', async () => {
+            const tz = document.getElementById('timezoneSelect').value;
+            savePrefsBtn.disabled = true;
+            savePrefsBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+            
+            try {
+                const res = await fetchWithAuth('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key: 'timezone', value: tz })
+                });
+                
+                if (!res.ok) throw new Error("Failed to save preference");
+                
+                savePrefsBtn.innerHTML = '<i class="fa-solid fa-check"></i> Saved';
+                savePrefsBtn.classList.replace('bg-indigo-600', 'bg-green-600');
+                
+                setTimeout(() => {
+                    savePrefsBtn.innerHTML = '<i class="fa-solid fa-check"></i> Save Preferences';
+                    savePrefsBtn.classList.replace('bg-green-600', 'bg-indigo-600');
+                    savePrefsBtn.disabled = false;
+                }, 2000);
+            } catch (err) {
+                console.error(err);
+                alert("Error saving preferences.");
+                savePrefsBtn.disabled = false;
+                savePrefsBtn.innerHTML = '<i class="fa-solid fa-check"></i> Save Preferences';
+            }
+        });
+    }
 
     // Jump to Top/Bottom Logic
     function updateJumpButtonVisibility() {

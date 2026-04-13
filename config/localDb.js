@@ -68,6 +68,22 @@ function initDb() {
                 "stoppedAt" DATETIME
             )
         `);
+
+        // Concurrency Stats Table
+        localDb.run(`
+            CREATE TABLE IF NOT EXISTS concurrency_stats (
+                timestamp DATETIME PRIMARY KEY,
+                active_count INTEGER
+            )
+        `);
+
+        // Global Dashboard Settings (Timezone, etc)
+        localDb.run(`
+            CREATE TABLE IF NOT EXISTS dashboard_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        `);
     });
 }
 

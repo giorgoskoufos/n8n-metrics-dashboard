@@ -51,29 +51,21 @@ exports.getMetrics = async (req, res) => {
         let queryParams = [];
         if (targetWorkflow) queryParams.push(targetWorkflow);
 
-        const hourlyQuery = `
-            WITH RECURSIVE time_series(time_point) AS (
-                SELECT strftime('${truncUnitFormat}', datetime('now', '${intervalOffset}'))
-                UNION ALL
-                SELECT datetime(time_point, '${step}')
-                FROM time_series
-                WHERE time_point < strftime('${truncUnitFormat}', 'now')
-            ),
-            recent_executions AS (
-                SELECT e.id, e.status, strftime('${truncUnitFormat}', e."startedAt") as exec_time
-                FROM execution_entity e
-                ${targetWorkflow ? 'JOIN workflow_entity w ON e."workflowId" = w.id' : ''}
-                WHERE datetime(e."startedAt") > datetime('now', '${lookback}')
-                ${targetWorkflow ? 'AND w.name = ?' : ''}
-            )
-            SELECT t.time_point as time_val, 
-                   SUM(CASE WHEN e.status = 'success' THEN 1 ELSE 0 END) AS success_count, 
-                   SUM(CASE WHEN e.status = 'error' THEN 1 ELSE 0 END) AS error_count
-            FROM time_series t 
-            LEFT JOIN recent_executions e ON t.time_point = e.exec_time 
-            GROUP BY t.time_point 
-            ORDER BY t.time_point ASC;
-        `;
+        // Generate hourly buckets for the last 24h/48h/7d in JS
+        const now = new Date();
+        const buckets = [];
+        let bucketCount = 24;
+        let stepMs = 3600000; // 1 hour
+        if (timeRange === '48h') bucketCount = 48;
+        if (timeRange === '7d') { bucketCount = 7; stepMs = 86400000; }
+
+        for (let i = 0; i < bucketCount; i++) {
+            const t = new Date(now.getTime() - (i * stepMs));
+            if (timeRange === '7d') t.setHours(0, 0, 0, 0);
+            else t.setMinutes(0, 0, 0);
+            buckets.push(t.toISOString());
+        }
+        buckets.reverse();
 
         const topWorkflowsQuery = `
             SELECT w.name AS workflow_name, COUNT(e.id) AS execution_count,
@@ -85,12 +77,34 @@ exports.getMetrics = async (req, res) => {
             ORDER BY execution_count DESC;
         `;
 
-        const [stats, prevStats, hourly, topWorkflows] = await Promise.all([
+        const [stats, prevStats, execs, topWorkflows] = await Promise.all([
             localDb.query(statsQuery, queryParams),
             localDb.query(prevStatsQuery, queryParams),
-            localDb.query(hourlyQuery, targetWorkflow ? [targetWorkflow] : []), 
+            localDb.query(`
+                SELECT status, "startedAt" 
+                FROM execution_entity 
+                WHERE datetime("startedAt") > datetime('now', ?)
+                ${targetWorkflow ? 'AND "workflowId" = (SELECT id FROM workflow_entity WHERE name = ?)' : ''}
+            `, [lookback, ...(targetWorkflow ? [targetWorkflow] : [])]), 
             localDb.query(topWorkflowsQuery)
         ]);
+
+        // Map executions into buckets
+        const hourly = buckets.map(bTime => {
+            const bStart = new Date(bTime);
+            const bEnd = new Date(bStart.getTime() + stepMs);
+            
+            const matches = execs.rows.filter(e => {
+                const sAt = new Date(e.startedAt + (e.startedAt.endsWith('Z') ? '' : 'Z'));
+                return sAt >= bStart && sAt < bEnd;
+            });
+
+            return {
+                time_val: bTime,
+                success_count: matches.filter(m => m.status === 'success').length,
+                error_count: matches.filter(m => m.status !== 'success').length
+            };
+        });
 
         const currentTotal = stats.rows[0].total || 0;
         const currentError = stats.rows[0].error || 0;
@@ -107,10 +121,10 @@ exports.getMetrics = async (req, res) => {
         if (prevError === 0 && currentError > 0) trend_error_pct = 100;
 
         // Active-Bucket Extrapolation -> Normalize the final interval drop-off on line charts
-        if (hourly.rows.length > 2) {
-            const lastRow = hourly.rows[hourly.rows.length - 1];
-            const p1 = hourly.rows[hourly.rows.length - 2].success_count || 0;
-            const p2 = hourly.rows[hourly.rows.length - 3].success_count || 0;
+        if (hourly.length > 2) {
+            const lastRow = hourly[hourly.length - 1];
+            const p1 = hourly[hourly.length - 2].success_count || 0;
+            const p2 = hourly[hourly.length - 3].success_count || 0;
             const avgPrevious = (p1 + p2) / 2.0;
 
             const now = new Date();
@@ -140,7 +154,7 @@ exports.getMetrics = async (req, res) => {
 
         res.json({
             summary: { ...stats.rows[0], trend_total_pct, trend_error_pct },
-            hourlyData: hourly.rows,
+            hourlyData: hourly,
             topWorkflows: topWorkflows.rows 
         });
     } catch (err) {
@@ -403,5 +417,81 @@ exports.getRoiMetrics = async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Database error fetching ROI metrics' });
+    }
+};
+
+exports.getConcurrencyData = async (req, res) => {
+    try {
+        const query = `
+            SELECT timestamp, active_count 
+            FROM concurrency_stats 
+            ORDER BY timestamp ASC 
+            LIMIT 1000
+        `;
+        const result = await localDb.query(query);
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch concurrency' });
+    }
+};
+
+exports.getGlobalSettings = async (req, res) => {
+    try {
+        const result = await localDb.query('SELECT key, value FROM dashboard_settings');
+        // Convert array of pairs to a cleaner object for the frontend
+        const settings = result.rows.reduce((acc, curr) => {
+            acc[curr.key] = curr.value;
+            return acc;
+        }, {});
+        res.json(settings);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch settings' });
+    }
+};
+
+exports.updateGlobalSettings = async (req, res) => {
+    const { key, value } = req.body;
+    if (!key) return res.status(400).json({ error: 'Key is required' });
+
+    try {
+        await localDb.execute(
+            'INSERT INTO dashboard_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+            [key, value]
+        );
+        res.json({ message: 'Setting updated' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to update setting' });
+    }
+};
+
+exports.getConcurrencyDetails = async (req, res) => {
+    const { time, window: windowMins } = req.query; // time is UTC ISO
+    if (!time) return res.status(400).json({ error: 'time parameter is required' });
+
+    const span = parseInt(windowMins) || 5;
+    
+    try {
+        // Calculate the end of the window in SQL
+        const query = `
+            SELECT w.name as workflow_name, e.id as exec_id, e.status, e."startedAt", e."stoppedAt",
+                   (julianday(IFNULL(e."stoppedAt", datetime('now'))) - julianday(e."startedAt")) * 86400 as current_duration
+            FROM execution_entity e
+            JOIN workflow_entity w ON e."workflowId" = w.id
+            WHERE datetime(e."startedAt") <= datetime(?, '+' || ? || ' minutes')
+              AND (
+                  datetime(e."stoppedAt") >= datetime(?) OR
+                  (e.status = 'running' AND datetime(e."startedAt") > datetime('now', '-6 hours'))
+              )
+            ORDER BY datetime(e."startedAt") DESC
+            LIMIT 50
+        `;
+        const result = await localDb.query(query, [time, span, time]);
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch concurrency details' });
     }
 };

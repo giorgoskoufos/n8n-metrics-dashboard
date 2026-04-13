@@ -14,3 +14,5 @@ tasks.md
 
 docs\antigravity\antigravity_tasks.md
 *.sqlite
+
+scratch/

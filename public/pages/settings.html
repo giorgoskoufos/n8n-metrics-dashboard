@@ -1,16 +1,18 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0, viewport-fit=cover, interactive-widget=resizes-content">
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0, viewport-fit=cover, interactive-widget=resizes-content">
     <title>Settings | n8n Analytics</title>
-    
+
     <script src="../logic/guard.js"></script>
-    
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -25,43 +27,66 @@
         }
     </script>
     <style>
-        :root { color-scheme: dark; }
-        body { background-color: #171717; color: #eeeeee; -webkit-font-smoothing: antialiased; }
-        
+        :root {
+            color-scheme: dark;
+        }
+
+        body {
+            background-color: #171717;
+            color: #eeeeee;
+            -webkit-font-smoothing: antialiased;
+        }
+
         /* Select styling fixes for visibility */
-        select { color-scheme: dark; }
-        select option { background-color: #222222; color: #eeeeee; }
+        select {
+            color-scheme: dark;
+        }
+
+        select option {
+            background-color: #222222;
+            color: #eeeeee;
+        }
     </style>
     <link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
     <link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="../assets/favicon-16x16.png">
     <link rel="manifest" href="../assets/site.webmanifest">
 </head>
+
 <body class="p-4 md:p-8">
     <!-- Backdrop Overlay -->
-    <div id="burgerOverlay" class="fixed inset-0 bg-n8n-dark/40 backdrop-blur-md z-40 hidden opacity-0 transition-opacity duration-300"></div>
-    
+    <div id="burgerOverlay"
+        class="fixed inset-0 bg-n8n-dark/40 backdrop-blur-md z-40 hidden opacity-0 transition-opacity duration-300">
+    </div>
+
     <div class="max-w-4xl mx-auto">
-        
+
         <header class="flex flex-row justify-between items-center mb-8 gap-4 relative z-50">
             <div class="relative">
-                <button id="burgerBtn" class="p-3 text-gray-400 hover:text-white transition-colors bg-n8n-card border border-gray-700 rounded-lg focus:outline-none flex items-center justify-center">
+                <button id="burgerBtn"
+                    class="p-3 text-gray-400 hover:text-white transition-colors bg-n8n-card border border-gray-700 rounded-lg focus:outline-none flex items-center justify-center">
                     <i class="fa-solid fa-bars fa-fw text-lg"></i>
                 </button>
-                <div id="burgerMenu" class="absolute left-0 mt-2 w-56 bg-n8n-card border border-gray-700 rounded-lg shadow-2xl hidden flex-col z-50 overflow-hidden divide-y divide-gray-800">
-                    <a href="../index.html" class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
+                <div id="burgerMenu"
+                    class="absolute left-0 mt-2 w-56 bg-n8n-card border border-gray-700 rounded-lg shadow-2xl hidden flex-col z-50 overflow-hidden divide-y divide-gray-800">
+                    <a href="../index.html"
+                        class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
                         <i class="fa-solid fa-chart-pie fa-fw mr-3 w-4"></i>Dashboard
                     </a>
-                    <a href="roi.html" class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
+                    <a href="roi.html"
+                        class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
                         <i class="fa-solid fa-clock fa-fw mr-3 w-4 text-green-400"></i>ROI Analytics
                     </a>
-                    <a href="settings.html" class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
+                    <a href="settings.html"
+                        class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
                         <i class="fa-solid fa-gear fa-fw mr-3 w-4 text-gray-400"></i>Settings
                     </a>
-                    <button onclick="logout()" class="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-red-900/30 hover:text-red-300 transition-colors flex items-center bg-red-900/10">
+                    <button onclick="logout()"
+                        class="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-red-900/30 hover:text-red-300 transition-colors flex items-center bg-red-900/10">
                         <i class="fa-solid fa-right-from-bracket fa-fw mr-3 w-4"></i>Logout
                     </button>
-                    <div id="n8nHealthIndicator" class="px-4 py-3 border-t border-gray-800 flex items-center bg-black/40 text-[10px] text-gray-500 justify-center uppercase tracking-widest font-semibold">
+                    <div id="n8nHealthIndicator"
+                        class="px-4 py-3 border-t border-gray-800 flex items-center bg-black/40 text-[10px] text-gray-500 justify-center uppercase tracking-widest font-semibold">
                         <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Checking
                     </div>
                 </div>
@@ -72,127 +97,200 @@
             </div>
         </header>
 
-        <section class="bg-n8n-card border border-gray-800 rounded-xl shadow-sm overflow-hidden mb-6">
-            <!-- Accordion Header -->
-            <button id="roiToggle" class="w-full p-6 flex justify-between items-center bg-n8n-card hover:bg-gray-800/50 transition-colors focus:outline-none group">
-                <div class="text-left">
-                    <h2 class="text-lg font-bold text-white flex items-center gap-2">
-                        <i class="fa-solid fa-clock-rotate-left text-green-400"></i> Workflow Time Savings
-                    </h2>
-                    <p class="text-xs text-gray-400 mt-1">Configure automation ROI metrics</p>
-                </div>
-                <i id="roiArrow" class="fa-solid fa-chevron-down transition-transform duration-300"></i>
-            </button>
+        <div class="space-y-6">
+            <!-- General Preferences Section -->
+            <section class="bg-n8n-card border border-gray-800 rounded-xl shadow-sm overflow-hidden">
+                <button id="prefToggle"
+                    class="w-full p-6 flex justify-between items-center bg-n8n-card hover:bg-gray-800/50 transition-colors focus:outline-none group">
+                    <div class="text-left">
+                        <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                            <i class="fa-solid fa-earth-americas text-indigo-400"></i> General Preferences
+                        </h2>
+                        <p class="text-xs text-gray-400 mt-1">Configure timezones & localization</p>
+                    </div>
+                    <i id="prefArrow" class="fa-solid fa-chevron-down transition-transform duration-300"></i>
+                </button>
 
-            <!-- Accordion Content -->
-            <div id="roiContent" class="hidden border-t border-gray-800 p-6 transition-all duration-300 relative">
-                <div class="flex flex-col sm:flex-row items-start gap-2 mb-6">
-                    <p class="text-sm text-gray-400 font-medium flex-1">Assign a monetary and time replacement value for each workflow. The Wizard Calculator can help you seamlessly translate human labor parameters into precise n8n micro-metrics.</p>
-                    <div class="relative group cursor-pointer inline-flex items-center mt-2 sm:mt-0">
-                        <i class="fa-solid fa-circle-info text-indigo-400 text-lg sm:text-base"></i><span class="ml-2 text-indigo-400 text-sm sm:hidden font-medium">How it works</span>
-                        <div class="absolute z-50 right-0 top-8 w-72 bg-[#1a1a1a] border border-gray-700 text-gray-300 text-xs rounded-lg shadow-2xl p-4 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 pointer-events-none leading-relaxed">
-                            <strong class="text-white block mb-2 text-sm border-b border-gray-800 pb-2">How ROI Tracking Works</strong>
-                            <div class="space-y-2">
-                                <p><strong class="text-indigo-400">1. Setup Wage:</strong> Define the hourly cost of the manual labor being replaced.</p>
-                                <p><strong class="text-indigo-400">2. Use the Wizard:</strong> Tell the system how often humans used to perform this task (e.g. 5 times a week). The tool will intelligently fetch your n8n execution volume from the last 30 days to calculate a perfectly scaled "Seconds per Execution" logic ratio.</p>
+                <div id="prefContent" class="hidden border-t border-gray-800 p-6 space-y-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="space-y-2">
+                            <label class="text-sm font-semibold text-gray-300 flex items-center gap-2">
+                                <i class="fa-solid fa-clock-rotate-left text-gray-500"></i> Display Timezone
+                            </label>
+                            <select id="timezoneSelect"
+                                class="w-full bg-n8n-dark border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors">
+                                <option value="auto">Automatic (Browser Default)</option>
+                                <option value="UTC">UTC (Universal Time)</option>
+                                <option value="Europe/Athens">Europe/Athens</option>
+                                <option value="Europe/London">Europe/London</option>
+                                <option value="Europe/Berlin">Europe/Berlin</option>
+                                <option value="America/New_York">America/New_York</option>
+                                <option value="America/Chicago">America/Chicago</option>
+                                <option value="America/Los_Angeles">America/Los_Angeles</option>
+                                <option value="Asia/Dubai">Asia/Dubai</option>
+                                <option value="Asia/Tokyo">Asia/Tokyo</option>
+                                <option value="Australia/Sydney">Australia/Sydney</option>
+                            </select>
+                            <p class="text-[10px] text-gray-500 italic">Adjusts how executions and charts are displayed.
+                                Database storage remains strictly UTC.</p>
+                        </div>
+                    </div>
+                    <div class="pt-4 border-t border-gray-800 flex justify-end">
+                        <button id="savePrefsBtn"
+                            class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-6 rounded-lg transition-all text-sm flex items-center gap-2 shadow-lg">
+                            <i class="fa-solid fa-check"></i> Save Preferences
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ROI Section -->
+            <section class="bg-n8n-card border border-gray-800 rounded-xl shadow-sm overflow-hidden mb-6">
+                <!-- Accordion Header -->
+                <button id="roiToggle"
+                    class="w-full p-6 flex justify-between items-center bg-n8n-card hover:bg-gray-800/50 transition-colors focus:outline-none group">
+                    <div class="text-left">
+                        <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                            <i class="fa-solid fa-clock-rotate-left text-green-400"></i> Workflow Time Savings
+                        </h2>
+                        <p class="text-xs text-gray-400 mt-1">Configure automation ROI metrics</p>
+                    </div>
+                    <i id="roiArrow" class="fa-solid fa-chevron-down transition-transform duration-300"></i>
+                </button>
+
+                <!-- Accordion Content -->
+                <div id="roiContent" class="hidden border-t border-gray-800 p-6 transition-all duration-300 relative">
+                    <div class="flex flex-col sm:flex-row items-start gap-2 mb-6">
+                        <p class="text-sm text-gray-400 font-medium flex-1">Assign a monetary and time replacement value
+                            for each workflow. The Wizard Calculator can help you seamlessly translate human labor
+                            parameters into precise n8n micro-metrics.</p>
+                        <div class="relative group cursor-pointer inline-flex items-center mt-2 sm:mt-0">
+                            <i class="fa-solid fa-circle-info text-indigo-400 text-lg sm:text-base"></i><span
+                                class="ml-2 text-indigo-400 text-sm sm:hidden font-medium">How it works</span>
+                            <div
+                                class="absolute z-50 right-0 top-8 w-72 bg-[#1a1a1a] border border-gray-700 text-gray-300 text-xs rounded-lg shadow-2xl p-4 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 pointer-events-none leading-relaxed">
+                                <strong class="text-white block mb-2 text-sm border-b border-gray-800 pb-2">How ROI
+                                    Tracking Works</strong>
+                                <div class="space-y-2">
+                                    <p><strong class="text-indigo-400">1. Setup Wage:</strong> Define the hourly cost of
+                                        the manual labor being replaced.</p>
+                                    <p><strong class="text-indigo-400">2. Use the Wizard:</strong> Tell the system how
+                                        often humans used to perform this task (e.g. 5 times a week). The tool will
+                                        intelligently fetch your n8n execution volume from the last 30 days to calculate
+                                        a perfectly scaled "Seconds per Execution" logic ratio.</p>
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
-                
-                <!-- Search & Sort Toolbar -->
-                <div class="flex flex-col sm:flex-row gap-3 mb-6 justify-between items-center bg-n8n-dark/50 p-3 rounded-lg border border-gray-800 isolate">
-                    <div class="relative w-full sm:w-1/2">
-                        <i class="fa-solid fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500"></i>
-                        <input type="text" id="workflowSearch" placeholder="Search workflows..." class="w-full bg-[#171717] border border-gray-700 rounded-lg pl-9 pr-4 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors">
+
+                    <!-- Search & Sort Toolbar -->
+                    <div
+                        class="flex flex-col sm:flex-row gap-3 mb-6 justify-between items-center bg-n8n-dark/50 p-3 rounded-lg border border-gray-800 isolate">
+                        <div class="relative w-full sm:w-1/2">
+                            <i
+                                class="fa-solid fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500"></i>
+                            <input type="text" id="workflowSearch" placeholder="Search workflows..."
+                                class="w-full bg-[#171717] border border-gray-700 rounded-lg pl-9 pr-4 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors">
+                        </div>
+                        <div class="flex items-center gap-3 w-full sm:w-auto">
+                            <span class="text-xs text-gray-400 whitespace-nowrap">Sort by:</span>
+                            <select id="workflowSort"
+                                class="bg-[#171717] border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 cursor-pointer w-full sm:w-auto">
+                                <option value="name_asc">Name (A-Z)</option>
+                                <option value="name_desc">Name (Z-A)</option>
+                                <option value="execs_desc">Executions (High to Low)</option>
+                                <option value="time_desc">Time Configured (High to Low)</option>
+                            </select>
+                        </div>
                     </div>
-                    <div class="flex items-center gap-3 w-full sm:w-auto">
-                        <span class="text-xs text-gray-400 whitespace-nowrap">Sort by:</span>
-                        <select id="workflowSort" class="bg-[#171717] border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 cursor-pointer w-full sm:w-auto">
-                            <option value="name_asc">Name (A-Z)</option>
-                            <option value="name_desc">Name (Z-A)</option>
-                            <option value="execs_desc">Executions (High to Low)</option>
-                            <option value="time_desc">Time Configured (High to Low)</option>
-                        </select>
+
+                    <div id="settingsContainer" class="flex flex-col gap-3">
+                        <div class="text-center py-8 text-gray-500 text-sm"><i
+                                class="fa-solid fa-spinner fa-spin mr-2"></i>Loading workflows...</div>
+                    </div>
+
+                    <div
+                        class="mt-8 flex justify-end sticky bottom-0 bg-n8n-card pt-4 pb-2 z-10 border-t border-gray-800">
+                        <button id="saveBtn"
+                            class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-8 rounded-lg transition-all flex items-center gap-2 shadow-lg disabled:opacity-50">
+                            <i class="fa-solid fa-floppy-disk"></i> Save Settings
+                        </button>
                     </div>
                 </div>
+            </section>
 
-                <div id="settingsContainer" class="flex flex-col gap-3">
-                    <div class="text-center py-8 text-gray-500 text-sm"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Loading workflows...</div>
-                </div>
+        </div>
 
-                <div class="mt-8 flex justify-end sticky bottom-0 bg-n8n-card pt-4 pb-2 z-10 border-t border-gray-800">
-                    <button id="saveBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-8 rounded-lg transition-all flex items-center gap-2 shadow-lg disabled:opacity-50">
-                        <i class="fa-solid fa-floppy-disk"></i> Save Settings
-                    </button>
-                </div>
-            </div>
-        </section>
+        <!-- Floating Jump Button -->
+        <button id="jumpBtn"
+            class="fixed bottom-6 right-6 bg-gray-800 hover:bg-gray-700 text-white rounded-full w-14 h-14 flex items-center justify-center shadow-2xl transition-all border border-gray-600 z-50 focus:outline-none hidden opacity-0">
+            <i class="fa-solid fa-arrow-down transform transition-transform" id="jumpIcon"></i>
+        </button>
 
-    </div>
+        <!-- Scripts -->
+        <script src="../logic/app.js"></script>
+        <script src="../logic/settings.js"></script>
+        <script>
+            // Burger Menu Toggle Logic
+            const burgerBtn = document.getElementById('burgerBtn');
+            const burgerMenu = document.getElementById('burgerMenu');
+            const burgerOverlay = document.getElementById('burgerOverlay');
 
-    <!-- Floating Jump Button -->
-    <button id="jumpBtn" class="fixed bottom-6 right-6 bg-gray-800 hover:bg-gray-700 text-white rounded-full w-14 h-14 flex items-center justify-center shadow-2xl transition-all border border-gray-600 z-50 focus:outline-none hidden opacity-0">
-        <i class="fa-solid fa-arrow-down transform transition-transform" id="jumpIcon"></i>
-    </button>
-
-    <!-- Scripts -->
-    <script src="../logic/app.js"></script>
-    <script src="../logic/settings.js"></script>
-    <script>
-        // Burger Menu Toggle Logic
-        const burgerBtn = document.getElementById('burgerBtn');
-        const burgerMenu = document.getElementById('burgerMenu');
-        const burgerOverlay = document.getElementById('burgerOverlay');
-        
-        function toggleMenu(show) {
-            if (show) {
-                burgerMenu.classList.remove('hidden');
-                burgerMenu.classList.add('flex');
-                burgerOverlay.classList.remove('hidden');
-                setTimeout(() => burgerOverlay.classList.add('opacity-100'), 10);
-            } else {
-                burgerMenu.classList.add('hidden');
-                burgerMenu.classList.remove('flex');
-                burgerOverlay.classList.remove('opacity-100');
-                setTimeout(() => burgerOverlay.classList.add('hidden'), 300);
+            function toggleMenu(show) {
+                if (show) {
+                    burgerMenu.classList.remove('hidden');
+                    burgerMenu.classList.add('flex');
+                    burgerOverlay.classList.remove('hidden');
+                    setTimeout(() => burgerOverlay.classList.add('opacity-100'), 10);
+                } else {
+                    burgerMenu.classList.add('hidden');
+                    burgerMenu.classList.remove('flex');
+                    burgerOverlay.classList.remove('opacity-100');
+                    setTimeout(() => burgerOverlay.classList.add('hidden'), 300);
+                }
             }
-        }
 
-        burgerBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const isHidden = burgerMenu.classList.contains('hidden');
-            toggleMenu(isHidden);
-        });
+            burgerBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const isHidden = burgerMenu.classList.contains('hidden');
+                toggleMenu(isHidden);
+            });
 
-        // Close menu when clicking outside or on overlay
-        document.addEventListener('click', (e) => {
-            if (!burgerBtn.contains(e.target) && !burgerMenu.contains(e.target)) {
-                toggleMenu(false);
-            }
-        });
+            // Close menu when clicking outside or on overlay
+            document.addEventListener('click', (e) => {
+                if (!burgerBtn.contains(e.target) && !burgerMenu.contains(e.target)) {
+                    toggleMenu(false);
+                }
+            });
 
-        burgerOverlay.addEventListener('click', () => toggleMenu(false));
+            burgerOverlay.addEventListener('click', () => toggleMenu(false));
 
-        // ROI Accordion Toggle
-        const roiToggle = document.getElementById('roiToggle');
-        const roiContent = document.getElementById('roiContent');
-        const roiArrow = document.getElementById('roiArrow');
+            // General Preferences Toggle
+            const prefToggle = document.getElementById('prefToggle');
+            const prefContent = document.getElementById('prefContent');
+            const prefArrow = document.getElementById('prefArrow');
 
-        roiToggle.addEventListener('click', () => {
-            const isHidden = roiContent.classList.toggle('hidden');
-            if (!isHidden) {
-                roiArrow.classList.add('rotate-180');
-            } else {
-                roiArrow.classList.remove('rotate-180');
-            }
-        });
+            prefToggle.addEventListener('click', () => {
+                const isHidden = prefContent.classList.toggle('hidden');
+                prefArrow.classList.toggle('rotate-180', !isHidden);
+            });
 
-        // Auto-expand on first load for better UX
-        setTimeout(() => {
-            roiContent.classList.remove('hidden');
-            roiArrow.classList.add('rotate-180');
-        }, 300);
-    </script>
+            // ROI Accordion Toggle
+            const roiToggle = document.getElementById('roiToggle');
+            const roiContent = document.getElementById('roiContent');
+            const roiArrow = document.getElementById('roiArrow');
+
+            roiToggle.addEventListener('click', () => {
+                const isHidden = roiContent.classList.toggle('hidden');
+                roiArrow.classList.toggle('rotate-180', !isHidden);
+            });
+
+            // Auto-expand on first load for better UX
+            setTimeout(() => {
+                prefContent.classList.remove('hidden');
+                prefArrow.classList.add('rotate-180');
+            }, 100);
+        </script>
 </body>
+
 </html>

@@ -3,8 +3,8 @@
 // ==========================================
 
 // --- SECTION 1: GLOBALS ---
-let lineChart = null;
 let doughnutChart = null;
+let concurrencyChart = null;
 if (typeof Chart !== 'undefined') {
     Chart.defaults.font.family = "'Open Sans', sans-serif";
     Chart.defaults.color = '#eeeeee';
@@ -14,6 +14,41 @@ let currentTab = 'executions'; // Default active tab
 let currentOffset = 0;
 const LIMIT = 20;
 let isFetchingExecutions = false;
+let lastRawConcurrency = []; // Cache for raw 5-minute points
+
+window.userSettings = { timezone: 'auto' };
+
+/**
+ * Centrally formats any UTC string into the user's preferred timezone.
+ */
+window.formatTime = (utcStr, options = {}) => {
+    if (!utcStr) return 'N/A';
+    
+    // Ensure string is treated as UTC if it doesn't have an offset
+    const dateStr = (utcStr.endsWith('Z') || utcStr.includes('+')) ? utcStr : (utcStr + 'Z');
+    const date = new Date(dateStr);
+    
+    // Default to 24-hour time to avoid 12/24 confusion
+    const baseOptions = {
+        timeZone: window.userSettings.timezone === 'auto' ? undefined : window.userSettings.timezone,
+        hour12: false,
+        hourCycle: 'h23',
+        ...options
+    };
+    
+    return date.toLocaleString([], baseOptions);
+};
+
+// Fetch settings once at boot
+async function initSettings() {
+    try {
+        const res = await fetchWithAuth('/api/settings');
+        if (res.ok) {
+            window.userSettings = await res.json();
+            console.log("[SETTINGS] Timezone initialized:", window.userSettings.timezone || 'auto');
+        }
+    } catch(e) {}
+}
 
 // --- SECTION 1.5: HEALTH CHECK HELPER ---
 async function checkN8nHealth() {
@@ -86,10 +121,31 @@ function initCharts() {
         options: { 
             responsive: true, 
             maintainAspectRatio: false,
-            plugins: { legend: { display: false } }, 
+            plugins: { 
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        title: (tooltipItems) => {
+                            if (!tooltipItems.length) return '';
+                            return window.formatTime(tooltipItems[0].label, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                        }
+                    }
+                }
+            }, 
             scales: { 
                 y: { grid: { color: '#333' }, min: 0 }, 
-                x: { grid: { color: '#333', display: false }, ticks: { maxTicksLimit: 8, maxRotation: 0 } } 
+                x: { 
+                    grid: { color: '#333', display: false }, 
+                    ticks: { 
+                        maxTicksLimit: 8, 
+                        maxRotation: 0,
+                        callback: function(val, index) {
+                            const label = this.getLabelForValue(val);
+                            if (!label) return '';
+                            return window.formatTime(label, { hour: '2-digit', minute: '2-digit' });
+                        }
+                    } 
+                } 
             } 
         }
     });
@@ -99,6 +155,78 @@ function initCharts() {
         type: 'doughnut',
         data: { labels: [], datasets: [{ data: [], borderWidth: 0, cutout: '75%' }] },
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+    });
+
+    const ctxConcurrency = document.getElementById('concurrencyChart').getContext('2d');
+    concurrencyChart = new Chart(ctxConcurrency, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Active Executions',
+                data: [],
+                borderColor: '#6366f1',
+                backgroundColor: (context) => {
+                    const chart = context.chart;
+                    const {ctx, chartArea} = chart;
+                    if (!chartArea) return null;
+                    const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+                    gradient.addColorStop(0, 'rgba(99, 102, 241, 0)');
+                    gradient.addColorStop(1, 'rgba(99, 102, 241, 0.3)');
+                    return gradient;
+                },
+                tension: 0.4,
+                fill: true,
+                pointRadius: 0,
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { 
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        title: (tooltipItems) => {
+                            if (!tooltipItems.length) return '';
+                            const startStr = tooltipItems[0].label;
+                            const intervalMins = parseInt(document.getElementById('concurrencyInterval')?.value) || 5;
+                            const startDate = new Date(startStr);
+                            const endDate = new Date(startDate.getTime() + intervalMins * 60000);
+                            
+                            const format = (d) => window.formatTime(d.toISOString(), { hour: '2-digit', minute: '2-digit' });
+                            return `${format(startDate)} - ${format(endDate)}`;
+                        },
+                        label: (context) => {
+                            return ` ${context.parsed.y} Executions`;
+                        }
+                    }
+                }
+            },
+            onClick: async (e, activeEls) => {
+                if (activeEls.length > 0) {
+                    const dataIndex = activeEls[0].index;
+                    const timestamp = concurrencyChart.data.labels[dataIndex];
+                    const interval = document.getElementById('concurrencyInterval')?.value || 5;
+                    await fetchConcurrencyDetails(timestamp, interval);
+                }
+            },
+            scales: {
+                y: { grid: { color: '#222' }, min: 0, ticks: { stepSize: 1, color: '#555' } },
+                x: { 
+                    grid: { display: false }, 
+                    ticks: { 
+                        color: '#555',
+                        maxTicksLimit: 12,
+                        callback: function(val, index) {
+                            const label = this.getLabelForValue(val);
+                            return window.formatTime(label, { hour: '2-digit', minute: '2-digit' });
+                        }
+                    } 
+                }
+            }
+        }
     });
 }
 
@@ -188,31 +316,12 @@ function updateKpiCards(summary) {
 function updateLineChart(chartData) {
     if (!chartData || chartData.length === 0) return;
 
-    const timeFilter = document.getElementById('timeRangeFilter')?.value || '24h';
     const labels = [];
     const successData = [];
     const errorData = [];
 
     chartData.forEach(row => {
-        const dateObj = new Date(row.time_val); 
-        let label = '';
-
-        if (!isNaN(dateObj.getTime())) {
-            if (timeFilter === '7d') {
-                label = dateObj.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' });
-            } else if (timeFilter === '48h') {
-                const hours = dateObj.getHours().toString().padStart(2, '0');
-                const day = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
-                label = `${day} ${hours}:00`;
-            } else {
-                const hours = dateObj.getHours().toString().padStart(2, '0');
-                label = `${hours}:00`;
-            }
-        } else {
-            label = 'Error';
-        }
-
-        labels.push(label);
+        labels.push(row.time_val); // Push raw ISO string, Chart ticks will format it
         successData.push(parseInt(row.success_count) || 0);
         errorData.push(parseInt(row.error_count) || 0);
     });
@@ -259,6 +368,122 @@ function updateDoughnutChart(workflows) {
     doughnutChart.update();
 }
 
+function updateConcurrencyChart(data) {
+    if (!data || !concurrencyChart) return;
+    
+    // 1. Cache the raw data for re-filtering
+    lastRawConcurrency = data;
+
+    // 2. Get current interval preference
+    const intervalMins = parseInt(document.getElementById('concurrencyInterval')?.value) || 5;
+    
+    const now = new Date();
+    const intervalMs = intervalMins * 60000;
+
+    let processedLabels = [];
+    let processedData = [];
+
+    if (intervalMins === 5) {
+        data.forEach(d => {
+            const bucketStart = new Date(d.timestamp);
+            if (bucketStart.getTime() + intervalMs <= now.getTime()) {
+                processedLabels.push(d.timestamp);
+                processedData.push(d.active_count);
+            }
+        });
+    } else {
+        // Aggregate 5m points into 10m or 30m blocks using SUM (Volume)
+        const pointsPerBlock = intervalMins / 5;
+        for (let i = 0; i < data.length; i += pointsPerBlock) {
+            const block = data.slice(i, i + pointsPerBlock);
+            if (block.length === 0) continue;
+            
+            const bucketStart = new Date(block[0].timestamp);
+            // Hide if the entire block hasn't passed yet
+            if (bucketStart.getTime() + intervalMs <= now.getTime()) {
+                const sum = block.reduce((acc, b) => acc + (parseInt(b.active_count) || 0), 0);
+                processedLabels.push(block[0].timestamp); 
+                processedData.push(sum);
+            }
+        }
+    }
+
+    concurrencyChart.data.labels = processedLabels;
+    concurrencyChart.data.datasets[0].data = processedData;
+    concurrencyChart.update();
+}
+
+async function fetchConcurrencyDetails(timestamp, windowSize = 5) {
+    const modal = document.getElementById('detailsModal');
+    const tbody = document.getElementById('detailsTableBody');
+    const subtitle = document.getElementById('detailsModalSubtitle');
+    
+    if (!modal) return;
+    
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-gray-500 italic">Fetching executions starting at ${timestamp}...</td></tr>`;
+    
+    // Display range in subtitle
+    const startDate = new Date(timestamp);
+    const endDate = new Date(startDate.getTime() + windowSize * 60000);
+    const startStr = window.formatTime(startDate.toISOString(), { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+    const endStr = window.formatTime(endDate.toISOString(), { hour: '2-digit', minute: '2-digit', hour12: false });
+    
+    subtitle.innerText = `${startStr} - ${endStr} (${windowSize}min)`;
+    
+    document.body.style.overflow = 'hidden'; // Lock background
+    modal.classList.remove('hidden');
+    modal.style.display = 'flex'; 
+    setTimeout(() => document.getElementById('detailsModalContainer').classList.remove('scale-95'), 10);
+
+    try {
+        const response = await fetchWithAuth(`/api/analytics/concurrency/details?time=${encodeURIComponent(timestamp)}&window=${windowSize}`);
+        const data = await response.json();
+        
+        if (data.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-gray-500 italic">No executions found precisely at this 5m interval.</td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = data.map(exec => {
+            const isError = exec.status !== 'success';
+            const statusColor = isError ? 'text-red-400' : (exec.status === 'running' ? 'text-blue-400 animate-pulse' : 'text-green-400');
+            const statusIcon = isError ? 'fa-xmark' : (exec.status === 'running' ? 'fa-spinner fa-spin' : 'fa-check');
+            
+            const timeString = window.formatTime(exec.startedAt, { hour: '2-digit', minute: '2-digit' });
+            
+            const durationSec = parseFloat(exec.current_duration);
+            const durationStr = durationSec < 60 ? `${Math.round(durationSec)}s` : `${Math.round(durationSec/60)}m`;
+
+            return `
+            <tr class="hover:bg-gray-800/30 transition-colors border-b border-gray-800/50">
+                <td class="p-4 text-white font-semibold text-sm truncate max-w-[200px]">${exec.workflow_name}</td>
+                <td class="p-4"><span class="${statusColor} text-[10px] font-bold uppercase tracking-tight"><i class="fa-solid ${statusIcon} mr-1"></i> ${exec.status}</span></td>
+                <td class="p-4 text-gray-400 text-xs">${timeString}</td>
+                <td class="p-4 text-gray-500 text-[10px] font-mono">${durationStr}</td>
+                <td class="p-4 text-right">
+                    <button onclick="showError('${exec.exec_id}')" class="text-indigo-400 hover:text-indigo-300 transition-colors" title="View details">
+                        <i class="fa-solid fa-arrow-right"></i>
+                    </button>
+                </td>
+            </tr>
+            `;
+        }).join('');
+        
+    } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-red-500 italic">Error fetching concurrency details.</td></tr>`;
+    }
+}
+
+function closeDetailsModal() {
+    const modal = document.getElementById('detailsModal');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.style.display = 'none';
+        document.getElementById('detailsModalContainer').classList.add('scale-95');
+        document.body.style.overflow = 'auto'; // Unlock
+    }
+}
+
 function populateDropdown(workflows) {
     const select = document.getElementById('workflowFilter');
     // Populate only if empty (contains only the "All Workflows" option)
@@ -274,42 +499,52 @@ function populateDropdown(workflows) {
 }
 
 // --- SECTION 4.5: ERROR MODAL LOGIC ---
-async function showError(execId) {
+async function showError(execId, hasSnapshot = false) {
     const modal = document.getElementById('errorModal');
     const msgBox = document.getElementById('modalErrorMessage');
     const idBox = document.getElementById('modalExecId');
+    const nodeBox = document.getElementById('modalNodeName');
     const n8nLink = document.getElementById('n8nLink');
+    const deepDiveBtn = document.getElementById('deepDiveBtn');
 
     if (!modal) return;
 
     idBox.innerText = execId;
-    msgBox.innerText = 'Loading error details...';
+    nodeBox.innerText = '--';
+    msgBox.innerText = 'Loading snapshot...';
     
-    if (n8nLink) {
-        n8nLink.style.display = 'none'; // Hide the link until valid data is returned
-    }
-
+    deepDiveBtn.onclick = () => fetchDetailedError(execId);
+    
     modal.classList.remove('hidden');
     modal.style.display = 'flex'; 
+    document.body.style.overflow = 'hidden'; // Lock background
+    setTimeout(() => document.getElementById('modalContainer').classList.remove('scale-95'), 10);
 
     try {
         const response = await fetchWithAuth(`/api/execution-error/${execId}`);
         const data = await response.json();
         
-        console.log("API Result Data:", data); // Check console for debugging
-        
-        msgBox.innerText = data.message || 'Unknown error';
+        nodeBox.innerText = data.nodeName || 'Unknown Node';
+        msgBox.innerText = data.message || 'Snapshot unavailable. Try fetching the raw trace.';
 
-        // Verify we have required data for deep-linking
         if (n8nLink && data.workflowId && data.n8nBaseUrl) {
             n8nLink.href = `${data.n8nBaseUrl}/workflow/${data.workflowId}/executions/${execId}`;
-            n8nLink.style.display = 'inline-block';
-        } else {
-            console.warn("Missing workflowId or n8nBaseUrl. Data returned:", data);
         }
     } catch (err) {
-        console.error("Fetch Error:", err);
-        msgBox.innerText = 'Error retrieving data from the server.';
+        msgBox.innerText = 'No instant snapshot found. Use "Fetch Raw Trace" for a deep inspection.';
+    }
+}
+
+async function fetchDetailedError(execId) {
+    const msgBox = document.getElementById('modalErrorMessage');
+    msgBox.innerText = 'Fetching raw JSON dump from Postgres... (This may take a moment)';
+    
+    try {
+        const response = await fetchWithAuth(`/api/execution-error/${execId}?full=true`);
+        const data = await response.json();
+        msgBox.innerText = data.fullError || data.message || 'Full trace unavailable.';
+    } catch (e) {
+        msgBox.innerText = 'Error fetching raw trace from production database.';
     }
 }
 
@@ -318,13 +553,18 @@ function closeErrorModal() {
     if (modal) {
         modal.classList.add('hidden');
         modal.style.display = 'none';
+        document.body.style.overflow = 'auto'; // Unlock
     }
 }
 
 window.addEventListener('click', (event) => {
     const modal = document.getElementById('errorModal');
+    const detailsModal = document.getElementById('detailsModal');
     if (modal && event.target === modal) {
         closeErrorModal();
+    }
+    if (detailsModal && event.target === detailsModal) {
+        closeDetailsModal();
     }
 });
 
@@ -351,15 +591,14 @@ async function loadMoreExecutions(reset = false) {
 
     if (executions.length > 0) {
         executions.forEach(exec => {
-            const dateObj = new Date(exec.startedAt);
-            const timeString = `${dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${dateObj.toLocaleTimeString('en-US', { hour12: false })}`;
+            const timeString = window.formatTime(exec.startedAt, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
             const duration = exec.duration < 1 ? Math.round(exec.duration * 1000) + 'ms' : parseFloat(exec.duration).toFixed(3) + 's';
             
             const isError = exec.status !== 'success';
 
             const statusHtml = !isError 
                 ? `<span class="flex items-center gap-2 text-[#278250]"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg> Success</span>`
-                : `<span class="flex items-center gap-2 text-[#f16a75]"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path></svg> Error</span>`;
+                : `<span class="flex items-center gap-2 text-[#f16a75] font-bold"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path></svg> Error</span>`;
 
             const actionAttr = isError ? `onclick="showError('${exec.exec_id}')" style="cursor: pointer;" title="View Error"` : '';
 
@@ -410,9 +649,17 @@ async function refreshData() {
             populateDropdown(data.topWorkflows); 
         }
     }
+
+    // Fetch Concurrency
+    const concRes = await fetchWithAuth('/api/analytics/concurrency');
+    if (concRes.ok) {
+        const concData = await concRes.json();
+        updateConcurrencyChart(concData);
+    }
 }
 
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
+    await initSettings();
     initCharts();
     setupInfiniteScroll();
     refreshData(); 
@@ -423,6 +670,15 @@ window.addEventListener('DOMContentLoaded', () => {
     
     const wfFilter = document.getElementById('workflowFilter');
     if (wfFilter) wfFilter.addEventListener('change', refreshData);
+
+    const concInterval = document.getElementById('concurrencyInterval');
+    if (concInterval) {
+        concInterval.addEventListener('change', () => {
+            if (lastRawConcurrency.length > 0) {
+                updateConcurrencyChart(lastRawConcurrency);
+            }
+        });
+    }
 });
 
 // --- SECTION 7: TAB NAVIGATION & DYNAMIC TABLES ---

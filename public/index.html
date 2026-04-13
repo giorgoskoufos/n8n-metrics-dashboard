@@ -1,8 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0, viewport-fit=cover, interactive-widget=resizes-content">
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0, viewport-fit=cover, interactive-widget=resizes-content">
     <title>n8n Metrics Monitor</title>
     <script src="logic/guard.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -11,8 +13,8 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    
-    
+
+
     <script>
         tailwind.config = {
             theme: {
@@ -25,60 +27,135 @@
             }
         }
     </script>
-    
+
     <style>
-        :root { color-scheme: dark; }
-        body { background-color: #171717; color: #eeeeee; }
-        .status-success { background-color: rgba(39, 130, 80, 0.2); color: #4ade80; }
-        .status-error { background-color: rgba(241, 106, 117, 0.2); color: #f87171; }
-        .tab-btn.active { border-bottom: 2px solid #ff6f5c; color: #ff6f5c; }
-        
+        :root {
+            color-scheme: dark;
+        }
+
+        body {
+            background-color: #171717;
+            color: #eeeeee;
+        }
+
+        .status-success {
+            background-color: rgba(39, 130, 80, 0.2);
+            color: #4ade80;
+        }
+
+        .status-error {
+            background-color: rgba(241, 106, 117, 0.2);
+            color: #f87171;
+        }
+
+        .tab-btn.active {
+            border-bottom: 2px solid #ff6f5c;
+            color: #ff6f5c;
+        }
+
         /* Markdown Chat Styling */
-        .prose-chat table { display: block; width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; border-collapse: collapse; margin: 8px 0; font-size: 11px; background: rgba(0,0,0,0.2); border-radius: 8px; }
-        .prose-chat th { background: rgba(99, 102, 241, 0.1); padding: 8px; border: 1px solid rgba(255,255,255,0.1); text-align: left; color: #818cf8; white-space: nowrap; }
-        .prose-chat td { padding: 8px; border: 1px solid rgba(255,255,255,0.05); color: #d1d5db; white-space: nowrap; }
-        .prose-chat strong { color: #818cf8; font-weight: 600; }
-        .prose-chat ul { list-style-type: disc; margin-left: 1.5rem; margin-top: 0.5rem; margin-bottom: 0.5rem; }
-        .prose-chat p { margin-bottom: 0.75rem; }
-        .prose-chat p:last-child { margin-bottom: 0; }
+        .prose-chat table {
+            display: block;
+            width: 100%;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            border-collapse: collapse;
+            margin: 8px 0;
+            font-size: 11px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+        }
+
+        .prose-chat th {
+            background: rgba(99, 102, 241, 0.1);
+            padding: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: left;
+            color: #818cf8;
+            white-space: nowrap;
+        }
+
+        .prose-chat td {
+            padding: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            color: #d1d5db;
+            white-space: nowrap;
+        }
+
+        .prose-chat strong {
+            color: #818cf8;
+            font-weight: 600;
+        }
+
+        .prose-chat ul {
+            list-style-type: disc;
+            margin-left: 1.5rem;
+            margin-top: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .prose-chat p {
+            margin-bottom: 0.75rem;
+        }
+
+        .prose-chat p:last-child {
+            margin-bottom: 0;
+        }
 
         /* Select styling fixes for visibility */
-        select { color-scheme: dark; }
-        select option { background-color: #222222; color: #eeeeee; }
+        select {
+            color-scheme: dark;
+        }
+
+        select option {
+            background-color: #222222;
+            color: #eeeeee;
+        }
     </style>
     <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
     <link rel="icon" type="image/png" sizes="32x32" href="assets//favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="assets//favicon-16x16.png">
     <link rel="manifest" href="assets//site.webmanifest">
 </head>
+
 <body class="p-4 md:p-8">
     <!-- Backdrop Overlay -->
-    <div id="burgerOverlay" class="fixed inset-0 bg-n8n-dark/40 backdrop-blur-md z-40 hidden opacity-0 transition-opacity duration-300"></div>
-    
+    <div id="burgerOverlay"
+        class="fixed inset-0 bg-n8n-dark/40 backdrop-blur-md z-40 hidden opacity-0 transition-opacity duration-300">
+    </div>
+
     <div class="max-w-7xl mx-auto">
-        
+
         <header class="flex flex-row justify-between items-center mb-8 gap-4 relative z-50">
             <div class="relative">
-                <button id="burgerBtn" class="p-3 text-gray-400 hover:text-white transition-colors bg-n8n-card border border-gray-700 rounded-lg focus:outline-none flex items-center justify-center">
+                <button id="burgerBtn"
+                    class="p-3 text-gray-400 hover:text-white transition-colors bg-n8n-card border border-gray-700 rounded-lg focus:outline-none flex items-center justify-center">
                     <i class="fa-solid fa-bars fa-fw text-lg"></i>
                 </button>
-                <div id="burgerMenu" class="absolute left-0 mt-2 w-56 bg-n8n-card border border-gray-700 rounded-lg shadow-2xl hidden flex-col z-50 overflow-hidden divide-y divide-gray-800">
-                    <a href="index.html" class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
+                <div id="burgerMenu"
+                    class="absolute left-0 mt-2 w-56 bg-n8n-card border border-gray-700 rounded-lg shadow-2xl hidden flex-col z-50 overflow-hidden divide-y divide-gray-800">
+                    <a href="index.html"
+                        class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
                         <i class="fa-solid fa-chart-pie fa-fw mr-3 w-4"></i>Dashboard
                     </a>
-                    <a href="pages/roi.html" class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
+                    <a href="pages/roi.html"
+                        class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
                         <i class="fa-solid fa-clock fa-fw mr-3 w-4 text-green-400"></i>ROI Analytics
                     </a>
-                    <a href="pages/settings.html" class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
+                    <a href="pages/settings.html"
+                        class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
                         <i class="fa-solid fa-gear fa-fw mr-3 w-4 text-gray-400"></i>Settings
                     </a>
-                    <button onclick="forceDbSync()" class="w-full text-left px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
+                    <button onclick="forceDbSync()"
+                        class="w-full text-left px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
                         <i id="syncIcon" class="fa-solid fa-rotate fa-fw mr-3 w-4 text-indigo-400"></i>Sync Data
                     </button>
-                    <button onclick="logout()" class="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-red-900/30 hover:text-red-300 transition-colors flex items-center bg-red-900/10">
+                    <button onclick="logout()"
+                        class="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-red-900/30 hover:text-red-300 transition-colors flex items-center bg-red-900/10">
                         <i class="fa-solid fa-right-from-bracket fa-fw mr-3 w-4"></i>Logout
                     </button>
-                    <div id="n8nHealthIndicator" class="px-4 py-3 border-t border-gray-800 flex items-center bg-black/40 text-[10px] text-gray-500 justify-center uppercase tracking-widest font-semibold">
+                    <div id="n8nHealthIndicator"
+                        class="px-4 py-3 border-t border-gray-800 flex items-center bg-black/40 text-[10px] text-gray-500 justify-center uppercase tracking-widest font-semibold">
                         <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Checking
                     </div>
                 </div>
@@ -91,17 +168,21 @@
 
         <div class="flex flex-col sm:flex-row justify-end items-center mb-8 gap-4 w-full">
             <!-- Workflow Filter -->
-            <div class="flex items-center gap-3 bg-n8n-card border border-gray-800 rounded-lg px-4 py-2 w-full sm:w-64 hover:border-gray-700 transition-colors">
+            <div
+                class="flex items-center gap-3 bg-n8n-card border border-gray-800 rounded-lg px-4 py-2 w-full sm:w-64 hover:border-gray-700 transition-colors">
                 <span class="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-0">Workflow</span>
-                <select id="workflowFilter" class="bg-transparent border-none text-sm text-n8n-text font-semibold focus:outline-none w-full cursor-pointer">
+                <select id="workflowFilter"
+                    class="bg-transparent border-none text-sm text-n8n-text font-semibold focus:outline-none w-full cursor-pointer">
                     <option value="">All Workflows</option>
                 </select>
             </div>
-            
+
             <!-- Time Range Filter -->
-            <div class="flex items-center gap-3 bg-n8n-card border border-gray-800 rounded-lg px-4 py-2 w-full sm:w-64 hover:border-gray-700 transition-colors">
+            <div
+                class="flex items-center gap-3 bg-n8n-card border border-gray-800 rounded-lg px-4 py-2 w-full sm:w-64 hover:border-gray-700 transition-colors">
                 <span class="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-0">Range</span>
-                <select id="timeRangeFilter" class="bg-transparent border-none text-sm text-n8n-text font-semibold focus:outline-none w-full cursor-pointer">
+                <select id="timeRangeFilter"
+                    class="bg-transparent border-none text-sm text-n8n-text font-semibold focus:outline-none w-full cursor-pointer">
                     <option value="24h">Last 24h</option>
                     <option value="48h">Last 48h</option>
                     <option value="7d">Last 7 Days</option>
@@ -131,7 +212,7 @@
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-            
+
             <div class="lg:col-span-2 bg-n8n-card p-6 rounded-xl border border-gray-800 h-80 flex flex-col">
                 <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-2">
                     <h3 class="text-sm font-semibold text-gray-400">Execution Timeline</h3>
@@ -148,12 +229,45 @@
                 </div>
                 <div id="doughnutLegend"></div>
             </div>
-            
-        </div> <div class="bg-n8n-card rounded-xl border border-gray-800 overflow-hidden">
+
+        </div>
+
+        <div class="grid grid-cols-1 gap-6 mb-8">
+            <div
+                class="bg-n8n-card p-6 rounded-xl border border-gray-800 h-64 flex flex-col hover:border-indigo-500/30 transition-colors cursor-crosshair">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3">
+                    <h3 class="text-sm font-semibold text-gray-400 flex items-center gap-2">
+                        <i class="text-sm font-semibold text-gray-400"></i> Execution Volume (Traffic Monitor)
+                    </h3>
+                    <div class="flex items-center gap-3 w-full sm:w-auto">
+                        <span class="text-[10px] text-gray-500 uppercase tracking-widest whitespace-nowrap"><i
+                                class="fa-solid fa-clock mr-1"></i> Resolution:</span>
+                        <select id="concurrencyInterval"
+                            class="bg-black/30 border border-gray-700 rounded px-2 py-1 text-[10px] text-gray-300 focus:outline-none focus:border-indigo-500 cursor-pointer">
+                            <option value="5">5 Mins</option>
+                            <option value="10">10 Mins</option>
+                            <option value="30">30 Mins</option>
+                        </select>
+                        <span class="hidden md:inline text-[10px] text-gray-500 uppercase tracking-widest"><i
+                                class="fa-solid fa-mouse-pointer mr-1"></i> View Window</span>
+                    </div>
+                </div>
+                <div class="flex-1 relative overflow-x-auto overflow-y-hidden custom-scrollbar">
+                    <div class="h-full min-w-[700px] md:min-w-full">
+                        <canvas id="concurrencyChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-n8n-card rounded-xl border border-gray-800 overflow-hidden">
             <div class="flex border-b border-gray-800">
-                <button onclick="switchTab('executions')" class="tab-btn active px-6 py-4 text-sm font-medium">Executions</button>
-                <button onclick="switchTab('slowest')" class="tab-btn px-6 py-4 text-sm font-medium">Slowest (7d)</button>
-                <button onclick="switchTab('errors')" class="tab-btn px-6 py-4 text-sm font-medium">Error Hotspots</button>
+                <button onclick="switchTab('executions')"
+                    class="tab-btn active px-6 py-4 text-sm font-medium">Executions</button>
+                <button onclick="switchTab('slowest')" class="tab-btn px-6 py-4 text-sm font-medium">Slowest
+                    (7d)</button>
+                <button onclick="switchTab('errors')" class="tab-btn px-6 py-4 text-sm font-medium">Error
+                    Hotspots</button>
             </div>
             <div class="overflow-x-auto">
                 <table class="w-full text-left">
@@ -170,40 +284,129 @@
                 </table>
                 <div id="scrollTrigger" class="h-10 text-center text-gray-500 text-sm py-2"></div>
             </div>
-        </div> </div> <div id="errorModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
-        <div class="bg-n8n-card border border-gray-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
-            <div class="p-6 border-b border-gray-800 flex justify-between items-center">
-                <h3 class="text-xl font-bold text-n8n-danger">Error Details</h3>
-                <button onclick="closeErrorModal()" class="text-gray-400 hover:text-white text-3xl font-bold leading-none">&times;</button>
+        </div>
+    </div>
+
+    <div id="errorModal"
+        class="fixed inset-0 bg-black/90 backdrop-blur-md z-[100] hidden items-center justify-center p-4">
+        <div class="bg-n8n-card border border-gray-700 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl scale-95 transition-transform duration-300"
+            id="modalContainer">
+            <div class="p-6 border-b border-gray-800 flex justify-between items-center bg-black/20">
+                <div class="flex items-center gap-3">
+                    <div
+                        class="w-10 h-10 bg-red-900/40 rounded-lg flex items-center justify-center border border-red-500/30">
+                        <i class="fa-solid fa-triangle-exclamation text-red-400"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-white">Surgical Error Snapshot</h3>
+                        <p class="text-[10px] text-gray-500 uppercase tracking-widest">Post-Mortem Analysis</p>
+                    </div>
+                </div>
+                <button onclick="closeErrorModal()" class="text-gray-500 hover:text-white transition-colors">
+                    <i class="fa-solid fa-xmark text-xl"></i>
+                </button>
             </div>
-            <div class="p-6">
-                <p class="text-sm text-gray-400 mb-4">Execution ID: <span id="modalExecId" class="text-white font-mono"></span></p>
-                <div id="modalErrorMessage" class="bg-black/30 p-4 rounded-lg border border-red-900/30 text-red-400 font-mono text-sm leading-relaxed mb-6">Loading...</div>
-                <div class="flex justify-end">
-                    <a id="n8nLink" href="#" target="_blank" class="bg-[#ff6f5c] hover:bg-opacity-90 text-white px-6 py-2 rounded-lg font-bold transition-all">Open in n8n</a>
+            <div class="p-8">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+                    <div>
+                        <label class="block text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-1">Failing
+                            Node</label>
+                        <div id="modalNodeName"
+                            class="text-white font-semibold text-sm bg-black/30 p-3 rounded border border-gray-800">--
+                        </div>
+                    </div>
+                    <div>
+                        <label
+                            class="block text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-1">Execution
+                            ID</label>
+                        <div id="modalExecId"
+                            class="text-gray-400 font-mono text-sm bg-black/30 p-3 rounded border border-gray-800">--
+                        </div>
+                    </div>
+                </div>
+
+                <label class="block text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-1">Error
+                    Description</label>
+                <div id="modalErrorMessage"
+                    class="bg-red-900/10 p-4 rounded-lg border border-red-500/20 text-red-400 font-mono text-xs leading-relaxed mb-8 max-h-48 overflow-y-auto whitespace-pre-wrap">
+                    Loading...</div>
+
+                <div class="flex flex-col sm:flex-row justify-between items-center gap-4">
+                    <p class="text-[11px] text-gray-500 italic"><i
+                            class="fa-solid fa-lightbulb text-indigo-400 mr-1"></i> Snapshot captured via n8n Error
+                        Workflow</p>
+                    <div class="flex gap-3">
+                        <button id="deepDiveBtn"
+                            class="bg-gray-800 hover:bg-gray-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center gap-2">
+                            <i class="fa-solid fa-magnifying-glass-plus text-xs"></i> Fetch Raw Trace
+                        </button>
+                        <a id="n8nLink" href="#" target="_blank"
+                            class="bg-[#ff6f5c] hover:bg-opacity-90 text-white px-5 py-2.5 rounded-lg text-sm font-bold transition-all flex items-center gap-2">
+                            Open n8n <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+                        </a>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
+    <div id="detailsModal"
+        class="fixed inset-0 bg-black/90 backdrop-blur-md z-[100] hidden items-center justify-center p-4">
+        <div class="bg-n8n-card border border-gray-700 rounded-2xl w-full max-w-3xl flex flex-col shadow-2xl scale-95 transition-transform duration-300 h-[80vh]"
+            id="detailsModalContainer">
+            <div class="p-6 border-b border-gray-800 flex justify-between items-center bg-black/20 shrink-0">
+                <div class="flex items-center gap-3">
+                    <div
+                        class="w-10 h-10 bg-indigo-900/40 rounded-lg flex items-center justify-center border border-indigo-500/30">
+                        <i class="fa-solid fa-layer-group text-indigo-400"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-white">Execution Snapshot</h3>
+                        <p id="detailsModalSubtitle" class="text-[10px] text-gray-500 uppercase tracking-widest">
+                            Workflows started in this window</p>
+                    </div>
+                </div>
+                <button onclick="closeDetailsModal()" class="text-gray-500 hover:text-white transition-colors">
+                    <i class="fa-solid fa-xmark text-xl"></i>
+                </button>
+            </div>
+            <div class="flex-1 overflow-auto p-0 relative">
+                <table class="w-full text-left">
+                    <thead class="sticky top-0 bg-[#1e2329] border-b border-gray-800 shadow-md">
+                        <tr class="text-gray-400 text-xs uppercase tracking-widest">
+                            <th class="p-4 font-semibold">Workflow</th>
+                            <th class="p-4 font-semibold">Status</th>
+                            <th class="p-4 font-semibold">Started</th>
+                            <th class="p-4 font-semibold text-right">View</th>
+                        </tr>
+                    </thead>
+                    <tbody id="detailsTableBody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
     <!-- ========================================== -->
     <!-- AI CHAT WIDGET -->
     <!-- ========================================== -->
-    
+
     <!-- Floating Action Button -->
-    <button id="chatToggle" onclick="toggleChat()" 
-            class="fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-2xl flex items-center justify-center z-50 transition-all hover:rotate-12 hover:scale-110 active:scale-95 group">
+    <button id="chatToggle" onclick="toggleChat()"
+        class="fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-2xl flex items-center justify-center z-50 transition-all hover:rotate-12 hover:scale-110 active:scale-95 group">
         <i class="fa-solid fa-robot text-2xl group-hover:hidden"></i>
         <i class="fa-solid fa-xmark text-2xl hidden group-hover:block"></i>
     </button>
 
     <!-- Chat Window Container -->
-    <div id="chatWidget" 
-         class="fixed lg:bottom-24 lg:right-6 inset-0 lg:inset-auto w-full lg:w-[400px] h-[100dvh] lg:h-[600px] bg-n8n-dark lg:border border-gray-800 lg:rounded-3xl shadow-2xl flex flex-col z-[100] transform transition-all translate-y-full lg:translate-y-10 opacity-0 pointer-events-none overflow-hidden origin-bottom min-w-[300px] min-h-[400px]">
-        
+    <div id="chatWidget"
+        class="fixed lg:bottom-24 lg:right-6 inset-0 lg:inset-auto w-full lg:w-[400px] h-[100dvh] lg:h-[600px] bg-n8n-dark lg:border border-gray-800 lg:rounded-3xl shadow-2xl flex flex-col z-[100] transform transition-all translate-y-full lg:translate-y-10 opacity-0 pointer-events-none overflow-hidden origin-bottom min-w-[300px] min-h-[400px]">
+
         <!-- Resize Handle (Desktop & Mobile) -->
-        <div id="chatResizeHandle" class="flex absolute top-0 left-0 w-8 h-8 cursor-nw-resize z-[110] items-center justify-center group">
-            <div class="w-1.5 h-1.5 bg-gray-600 rounded-full group-hover:bg-indigo-500 transition-colors shadow-[4px_4px_0_rgba(75,85,99,0.5)]"></div>
+        <div id="chatResizeHandle"
+            class="flex absolute top-0 left-0 w-8 h-8 cursor-nw-resize z-[110] items-center justify-center group">
+            <div
+                class="w-1.5 h-1.5 bg-gray-600 rounded-full group-hover:bg-indigo-500 transition-colors shadow-[4px_4px_0_rgba(75,85,99,0.5)]">
+            </div>
         </div>
 
         <!-- Chat Header (Static) -->
@@ -219,7 +422,8 @@
                     </p>
                 </div>
             </div>
-            <button onclick="toggleChat()" class="text-gray-500 hover:text-white transition-colors p-2 h-10 w-10 flex items-center justify-center">
+            <button onclick="toggleChat()"
+                class="text-gray-500 hover:text-white transition-colors p-2 h-10 w-10 flex items-center justify-center">
                 <i class="fa-solid fa-xmark text-lg sm:fa-minus sm:text-base"></i>
             </button>
         </div>
@@ -227,28 +431,34 @@
         <!-- Chat Messages (Scrollable / Shrinkable) -->
         <main id="chatBox" class="flex-1 overflow-y-auto p-4 flex flex-col gap-4 scroll-smooth overscroll-contain">
             <div class="flex gap-4 items-start w-full">
-                <div class="bg-indigo-600/10 border border-indigo-500/20 w-8 h-8 shrink-0 flex items-center justify-center rounded-full mt-1">
+                <div
+                    class="bg-indigo-600/10 border border-indigo-500/20 w-8 h-8 shrink-0 flex items-center justify-center rounded-full mt-1">
                     <i class="fa-solid fa-robot text-indigo-400 text-sm"></i>
                 </div>
                 <div class="bg-n8n-card border border-gray-800 p-3 rounded-2xl rounded-tl-none max-w-[85%] shadow-sm">
-                    <p class="text-xs leading-relaxed">Hi! I can analyze your metrics and answer questions about your workflows.<br><br>Try: <span class="text-gray-400 italic">"What were the top 3 workflows yesterday by execution count?"</span></p>
+                    <p class="text-xs leading-relaxed">Hi! I can analyze your metrics and answer questions about your
+                        workflows.<br><br>Try: <span class="text-gray-400 italic">"What were the top 3 workflows
+                            yesterday by execution count?"</span></p>
                 </div>
             </div>
         </main>
 
         <!-- Chat Input (Rises with keyboard) -->
         <footer class="bg-n8n-card border-t border-gray-800 p-4 shrink-0 z-10">
-            <div class="relative flex items-center bg-black/40 border border-gray-700 rounded-xl focus-within:border-indigo-500 transition-colors">
-                <textarea id="userInput" rows="1" placeholder="Ask about your data..." 
-                          class="bg-transparent border-none w-full py-3 pl-4 pr-12 text-base text-white focus:outline-none resize-none max-h-32"></textarea>
-                <button id="sendBtn" class="absolute right-2 w-8 h-8 flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors shadow-lg shadow-indigo-600/20">
+            <div
+                class="relative flex items-center bg-black/40 border border-gray-700 rounded-xl focus-within:border-indigo-500 transition-colors">
+                <textarea id="userInput" rows="1" placeholder="Ask about your data..."
+                    class="bg-transparent border-none w-full py-3 pl-4 pr-12 text-base text-white focus:outline-none resize-none max-h-32"></textarea>
+                <button id="sendBtn"
+                    class="absolute right-2 w-8 h-8 flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors shadow-lg shadow-indigo-600/20">
                     <i class="fa-solid fa-paper-plane text-xs"></i>
                 </button>
             </div>
-            <p class="text-[9px] text-gray-500 mt-2 text-center italic">AI responses are limited to database analysis.</p>
+            <p class="text-[9px] text-gray-500 mt-2 text-center italic">AI responses are limited to database analysis.
+            </p>
         </footer>
     </div>
-    
+
     <script>
         async function forceDbSync() {
             const btn = document.getElementById('syncBtn');
@@ -257,17 +467,17 @@
             icon.classList.add('fa-spin-pulse');
             try {
                 const token = localStorage.getItem('dashboard_token');
-                if(!token) return;
+                if (!token) return;
                 const res = await fetch('/api/sync/force', {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 if (res.ok) {
-                    window.location.reload(); 
+                    window.location.reload();
                 } else {
                     alert('Sync failed - ensure server is running.');
                 }
-            } catch(e) {
+            } catch (e) {
                 console.error(e);
             } finally {
                 btn.disabled = false;
@@ -282,7 +492,7 @@
         const burgerBtn = document.getElementById('burgerBtn');
         const burgerMenu = document.getElementById('burgerMenu');
         const burgerOverlay = document.getElementById('burgerOverlay');
-        
+
         function toggleMenu(show) {
             if (show) {
                 burgerMenu.classList.remove('hidden');
@@ -313,4 +523,5 @@
         burgerOverlay.addEventListener('click', () => toggleMenu(false));
     </script>
 </body>
+
 </html>

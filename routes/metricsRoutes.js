@@ -13,7 +13,11 @@ router.post('/sync/force', authenticateToken, metricsController.forceSync);
 // Insights & ROI
 router.get('/n8n-health', authenticateToken, metricsController.getN8nHealth);
 router.get('/settings/roi', authenticateToken, metricsController.getSettings);
+router.get('/settings', authenticateToken, metricsController.getGlobalSettings);
+router.post('/settings', authenticateToken, metricsController.updateGlobalSettings);
 router.post('/settings/roi', authenticateToken, metricsController.updateSettings);
 router.get('/analytics/roi', authenticateToken, metricsController.getRoiMetrics);
+router.get('/analytics/concurrency', authenticateToken, metricsController.getConcurrencyData);
+router.get('/analytics/concurrency/details', authenticateToken, metricsController.getConcurrencyDetails);
 
 module.exports = router;
