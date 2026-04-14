@@ -5,7 +5,12 @@ const { parse } = require('flatted');
 exports.getMetrics = async (req, res) => {
     try {
         const targetWorkflow = req.query.workflow; 
-        const timeRange = req.query.timeRange || '24h'; 
+        const timeRange = req.query.timeRange || '24h';
+
+        const VALID_RANGES = ['24h', '48h', '7d'];
+        if (!VALID_RANGES.includes(timeRange)) {
+            return res.status(400).json({ error: 'Invalid timeRange. Must be one of: 24h, 48h, 7d' });
+        }
 
         let intervalOffset = '-23 hours';
         let lookback = '-24 hours';

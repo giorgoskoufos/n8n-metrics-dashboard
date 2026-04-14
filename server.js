@@ -31,21 +31,21 @@ app.use(helmet({
     },
 }));
 app.use(express.static('public'));
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
 
 // Main Routes
 app.use('/api', authRoutes);
 app.use('/api', metricsRoutes);
 app.use('/api', aiRoutes);
 
-// Health Check Endpoint
+// Health Check Endpoint (returns HTTP status only — no body to leak infra state)
 app.get('/healthz', async (req, res) => {
     try {
         const { pool } = require('./config/db');
         await pool.query('SELECT 1');
-        res.status(200).json({ status: 'ok', message: 'Dashboard is healthy' });
+        res.status(200).end();
     } catch (error) {
-        res.status(500).json({ status: 'error', message: 'Database connection failed' });
+        res.status(503).end();
     }
 });
 

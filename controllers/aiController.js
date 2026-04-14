@@ -30,6 +30,9 @@ exports.chat = async (req, res) => {
     const userId = req.user.id;
 
     if (!userMessage) return res.status(400).json({ error: "Message is required" });
+    if (typeof userMessage !== 'string' || userMessage.length > 2000) {
+        return res.status(400).json({ error: "Message must be a string under 2000 characters." });
+    }
 
     try {
         // --- STEP 0: Fetch History ---
@@ -64,9 +67,15 @@ exports.chat = async (req, res) => {
         // --- STEP 2: Execute SQL ---
         let dbResult;
         try {
-            // Read-only PRAGMA simulation or rely on SELECT parse
-            if (!generatedSql.toUpperCase().startsWith('SELECT') && !generatedSql.toUpperCase().startsWith('WITH')) {
+            // Guard 1: Only allow SELECT or WITH (CTE) statements
+            const upperSql = generatedSql.toUpperCase();
+            if (!upperSql.startsWith('SELECT') && !upperSql.startsWith('WITH')) {
                 throw new Error('Only SELECT queries are allowed.');
+            }
+            // Guard 2: Reject any DML/DDL keywords even inside CTEs
+            const dmlPattern = /\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|ATTACH|PRAGMA|DETACH|VACUUM)\b/i;
+            if (dmlPattern.test(generatedSql)) {
+                throw new Error('Destructive SQL operations are not permitted.');
             }
             dbResult = await localDb.query(generatedSql);
         } catch (dbError) {

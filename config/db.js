@@ -16,9 +16,4 @@ if (process.env.DASHBOARD_DATABASE_URL) {
 }
 const pool = new Pool(poolConfig);
 
-// 2B. AI Read-Only Database Pool
-const aiPool = new Pool({
-    connectionString: process.env.AI_DB_URL
-});
-
-module.exports = { pool, aiPool };
+module.exports = { pool };

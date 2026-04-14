@@ -15,20 +15,20 @@ This dashboard provides a robust alternative for the independent user:
 - **On-Premise Analytics**: Gain deep insights (beyond the basic 7-day summary) while keeping your data and workers on your own hardware.
 - **Operational Clarity**: High-granularity performance tracking across all executions without the need for an enterprise subscription.
 - **AI-Powered Discovery**: Interrogate your data using a natural language AI Assistant to identify bottlenecks, a functionality typically associated with managed services.
-- **Privacy & Sovereignty**: Your analytics data remains strictly within your PostgreSQL instance.
+- **Privacy & Sovereignty**: Analytics are served from an isolated local `dashboard.sqlite` replica — your production PostgreSQL instance is never hit by analytical queries or AI logic.
 
 ---
 
 > [!IMPORTANT]
 > **Hard Requirements:**
-> 1. **Self-Hosted n8n only**: This requires direct access to the n8n database.
-> 2. **PostgreSQL Only**: Your n8n instance must be configured to use **PostgreSQL**. It will NOT work with the default SQLite database.
+> 1. **Self-Hosted n8n only**: This requires direct access to the n8n database for the initial ETL sync.
+> 2. **PostgreSQL Only**: Your n8n instance must be configured to use **PostgreSQL**. It will NOT work with the default SQLite database. The dashboard syncs from Postgres into its own local `dashboard.sqlite` — after that, all queries run locally.
 
 ---
 
 > [!WARNING]
 > **Version Compatibility & Schema Dependency**
-> This dashboard directly queries n8n's internal database schema (specifically the `workflow_entity` and `execution_entity` tables). It has been built and tested against **n8n Version 1.x / 2.x**. Major future updates to n8n may alter this internal schema and require subsequent dashboard updates.
+> The ETL sync reads a minimal slice of n8n's internal schema (`workflow_entity` and `execution_entity` — metadata columns only, no payloads). It has been built and tested against **n8n Version 1.x / 2.x**. Major future updates to n8n's core schema structure may require a sync job update, but day-to-day analytics run entirely off the local SQLite replica.
 
 ---
 
@@ -50,7 +50,7 @@ EXECUTIONS_DATA_PRUNE=true
 EXECUTIONS_DATA_MAX_AGE=720
 ```
 > [!NOTE]
-> Increasing data retention will significantly increase your PostgreSQL database size. Ensure your host has adequate disk space.
+> Increasing n8n's data retention will grow your **PostgreSQL** database size. The dashboard's own `dashboard.sqlite` replica stores only lightweight metadata (no payloads), so its disk footprint remains minimal regardless of retention settings.
 
 ---
 
@@ -60,7 +60,7 @@ The backend follows a modular **MVC (Model-View-Controller)** architecture for s
 
 ### Architecture
 - **Config (`/config`)**: Manages external connections. 
-  - `db.js`: Handles dual-pool connection pooling (standard pool for dashboard data, read-only pool for AI).
+  - `db.js`: Manages the PostgreSQL connection pool used exclusively for the ETL sync and login verification. All analytics queries run against the local SQLite replica.
   - `openai.js`: Centralized OpenAI API initialization.
 - **Controllers (`/controllers`)**: Contains the business logic for analytics, authentication, and AI interaction.
 - **Middlewares (`/middlewares`)**:
@@ -132,8 +132,9 @@ The dashboard provides a dedicated **Error Intelligence** suite:
 
 ## 🚧 Retention & Performance Tuning
 By default, n8n prunes execution data frequently. To visualize long-term trends:
-- **Increase Max Age**: Set `EXECUTIONS_DATA_MAX_AGE` to `180`+ days.
-- **Save Debug Errors**: The dashboard supports a `SAVE_DEBUG_ERRORS=true` environment variable to capture deep JSON traces for AI interrogation.
+- **Increase Max Age**: Set `EXECUTIONS_DATA_MAX_AGE` to `180`+ days in your **n8n instance**.
+- **Local SQLite is unaffected**: The dashboard's `dashboard.sqlite` replica only grows when new executions are synced in — pruning in n8n does not retroactively remove already-synced rows from the local store. Historical data you've already captured stays intact.
+- **Save Debug Errors**: The dashboard supports a `SAVE_DEBUG_ERRORS=true` environment variable to capture deep JSON traces for diagnostic purposes.
 
 ---
 
