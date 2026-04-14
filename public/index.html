@@ -15,103 +15,9 @@
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
 
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: { sans: ['"Open Sans"', 'sans-serif'] },
-                    colors: {
-                        n8n: { dark: '#171717', card: '#222222', primary: '#ff6f5c', success: '#278250', danger: '#f16a75', text: '#eeeeee' }
-                    }
-                }
-            }
-        }
-    </script>
+    <script src="/js/tailwind.config.js"></script>
 
-    <style>
-        :root {
-            color-scheme: dark;
-        }
-
-        body {
-            background-color: #171717;
-            color: #eeeeee;
-        }
-
-        .status-success {
-            background-color: rgba(39, 130, 80, 0.2);
-            color: #4ade80;
-        }
-
-        .status-error {
-            background-color: rgba(241, 106, 117, 0.2);
-            color: #f87171;
-        }
-
-        .tab-btn.active {
-            border-bottom: 2px solid #ff6f5c;
-            color: #ff6f5c;
-        }
-
-        /* Markdown Chat Styling */
-        .prose-chat table {
-            display: block;
-            width: 100%;
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-            border-collapse: collapse;
-            margin: 8px 0;
-            font-size: 11px;
-            background: rgba(0, 0, 0, 0.2);
-            border-radius: 8px;
-        }
-
-        .prose-chat th {
-            background: rgba(99, 102, 241, 0.1);
-            padding: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            text-align: left;
-            color: #818cf8;
-            white-space: nowrap;
-        }
-
-        .prose-chat td {
-            padding: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            color: #d1d5db;
-            white-space: nowrap;
-        }
-
-        .prose-chat strong {
-            color: #818cf8;
-            font-weight: 600;
-        }
-
-        .prose-chat ul {
-            list-style-type: disc;
-            margin-left: 1.5rem;
-            margin-top: 0.5rem;
-            margin-bottom: 0.5rem;
-        }
-
-        .prose-chat p {
-            margin-bottom: 0.75rem;
-        }
-
-        .prose-chat p:last-child {
-            margin-bottom: 0;
-        }
-
-        /* Select styling fixes for visibility */
-        select {
-            color-scheme: dark;
-        }
-
-        select option {
-            background-color: #222222;
-            color: #eeeeee;
-        }
-    </style>
+    <link rel="stylesheet" href="/css/styles.css">
     <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
     <link rel="icon" type="image/png" sizes="32x32" href="assets//favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="assets//favicon-16x16.png">
@@ -266,6 +172,7 @@
             </div>
         </div>
 
+
         <div class="bg-n8n-card rounded-xl border border-gray-800 overflow-hidden">
             <div class="flex border-b border-gray-800">
                 <button onclick="switchTab('executions')"
@@ -282,8 +189,9 @@
                             <th class="p-4">ID</th>
                             <th class="p-4">Workflow</th>
                             <th class="p-4">Status</th>
-                            <th class="p-4">Time</th>
-                            <th class="p-4">Duration</th>
+                            <th class="p-4">Started</th>
+                            <th class="p-4">Ended</th>
+                            <th class="p-4">Run Time</th>
                         </tr>
                     </thead>
                     <tbody id="executionsTableBody"></tbody>

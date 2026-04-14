@@ -1,0 +1,15 @@
+/* ============================================
+   roi.css — pages/roi.html
+   ============================================ */
+
+:root { color-scheme: dark; }
+
+body {
+    background-color: #171717;
+    color: #eeeeee;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* Select styling fixes for visibility */
+select { color-scheme: dark; }
+select option { background-color: #222222; color: #eeeeee; }

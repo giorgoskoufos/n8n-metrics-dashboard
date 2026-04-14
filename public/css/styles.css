@@ -1,0 +1,86 @@
+/* ============================================
+   styles.css — index.html (main dashboard)
+   ============================================ */
+
+:root {
+    color-scheme: dark;
+}
+
+body {
+    background-color: #171717;
+    color: #eeeeee;
+}
+
+.status-success {
+    background-color: rgba(39, 130, 80, 0.2);
+    color: #4ade80;
+}
+
+.status-error {
+    background-color: rgba(241, 106, 117, 0.2);
+    color: #f87171;
+}
+
+.tab-btn.active {
+    border-bottom: 2px solid #ff6f5c;
+    color: #ff6f5c;
+}
+
+/* Markdown Chat Styling */
+.prose-chat table {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border-collapse: collapse;
+    margin: 8px 0;
+    font-size: 11px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+}
+
+.prose-chat th {
+    background: rgba(99, 102, 241, 0.1);
+    padding: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    text-align: left;
+    color: #818cf8;
+    white-space: nowrap;
+}
+
+.prose-chat td {
+    padding: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    color: #d1d5db;
+    white-space: nowrap;
+}
+
+.prose-chat strong {
+    color: #818cf8;
+    font-weight: 600;
+}
+
+.prose-chat ul {
+    list-style-type: disc;
+    margin-left: 1.5rem;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.prose-chat p {
+    margin-bottom: 0.75rem;
+}
+
+.prose-chat p:last-child {
+    margin-bottom: 0;
+}
+
+/* Select styling fixes for visibility */
+select {
+    color-scheme: dark;
+}
+
+select option {
+    background-color: #222222;
+    color: #eeeeee;
+}

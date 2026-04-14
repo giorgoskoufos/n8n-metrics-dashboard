@@ -171,18 +171,59 @@ exports.getMetrics = async (req, res) => {
 exports.getExecutions = async (req, res) => {
     const limit = Math.max(1, Math.min(100, parseInt(req.query.limit) || 20));
     const offset = Math.max(0, parseInt(req.query.offset) || 0);
-    
+
+    // --- Filter params ---
+    const { workflow, status, from, toStop, minDuration, execId } = req.query;
+
+    const VALID_STATUSES = ['success', 'error', 'canceled', 'crashed', 'running'];
+    if (status && !VALID_STATUSES.includes(status)) {
+        return res.status(400).json({ error: 'Invalid status filter.' });
+    }
+
+    const conditions = [
+        'e."startedAt" IS NOT NULL',
+        'e."stoppedAt" IS NOT NULL'
+    ];
+    const params = [];
+
+    if (execId && !isNaN(parseInt(execId))) {
+        conditions.push('e.id = ?');
+        params.push(parseInt(execId));
+    }
+    if (workflow) {
+        conditions.push('w.name = ?');
+        params.push(workflow);
+    }
+    if (status) {
+        conditions.push('e.status = ?');
+        params.push(status);
+    }
+    if (from) {
+        conditions.push('datetime(e."startedAt") >= datetime(?)');
+        params.push(new Date(from).toISOString());
+    }
+    if (toStop) {
+        conditions.push('datetime(e."startedAt") <= datetime(?)');
+        params.push(new Date(toStop).toISOString());
+    }
+    if (minDuration && parseFloat(minDuration) > 0) {
+        conditions.push('(julianday(e."stoppedAt") - julianday(e."startedAt")) * 86400 >= ?');
+        params.push(parseFloat(minDuration));
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
     try {
         const query = `
-            SELECT w.name, e.status, e."startedAt", e.id as exec_id,
+            SELECT w.name, e.status, e."startedAt", e."stoppedAt", e.id as exec_id,
                    (julianday(e."stoppedAt") - julianday(e."startedAt")) * 86400 as duration
             FROM execution_entity e
             JOIN workflow_entity w ON e."workflowId" = w.id
-            WHERE e."startedAt" IS NOT NULL AND e."stoppedAt" IS NOT NULL
+            ${whereClause}
             ORDER BY datetime(e."startedAt") DESC
             LIMIT ? OFFSET ?;
         `;
-        const result = await localDb.query(query, [limit, offset]);
+        const result = await localDb.query(query, [...params, limit, offset]);
         res.json(result.rows);
     } catch (err) {
         console.error(err);

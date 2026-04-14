@@ -15,6 +15,7 @@ let currentOffset = 0;
 const LIMIT = 20;
 let isFetchingExecutions = false;
 let lastRawConcurrency = []; // Cache for raw 5-minute points
+let lastTopWorkflows = [];   // Cache for exec filter dropdown
 
 window.userSettings = { timezone: 'auto' };
 
@@ -251,7 +252,25 @@ async function fetchMetricsData() {
 
 async function fetchExecutions(offset, limit) {
     try {
-        const response = await fetchWithAuth(`/api/executions?offset=${offset}&limit=${limit}`);
+        const params = new URLSearchParams();
+        params.append('offset', offset);
+        params.append('limit', limit);
+
+        const workflow = document.getElementById('execWorkflowFilter')?.value;
+        const status   = document.getElementById('execStatusFilter')?.value;
+        const execId   = document.getElementById('execIdFilter')?.value?.trim();
+        const startDt  = parseExecDate(document.getElementById('execStartFilter')?.value);
+        const endDt    = parseExecDate(document.getElementById('execEndFilter')?.value);
+        const minDur   = document.getElementById('execMinDurFilter')?.value;
+
+        if (workflow) params.append('workflow', workflow);
+        if (status)   params.append('status',   status);
+        if (execId && !isNaN(parseInt(execId))) params.append('execId', parseInt(execId));
+        if (startDt)  params.append('from',     startDt.toISOString());
+        if (endDt)    params.append('toStop',    endDt.toISOString());
+        if (minDur && parseFloat(minDur) > 0) params.append('minDuration', parseFloat(minDur));
+
+        const response = await fetchWithAuth(`/api/executions?${params.toString()}`);
         return response.ok ? await response.json() : [];
     } catch (err) {
         console.error("Error fetching executions:", err);
@@ -513,6 +532,136 @@ function populateDropdown(workflows) {
     }
 }
 
+function populateExecWorkflowDropdown(workflows) {
+    const select = document.getElementById('execWorkflowFilter');
+    if (!select || !workflows) return;
+    // Always rebuild — select is recreated each time the tab renders
+    while (select.options.length > 1) select.remove(1);
+    workflows.forEach(wf => {
+        const option = document.createElement('option');
+        option.value = wf.workflow_name;
+        option.innerText = wf.workflow_name;
+        select.appendChild(option);
+    });
+}
+
+function clearExecFilters() {
+    ['execWorkflowFilter','execStatusFilter','execIdFilter',
+     'execStartFilter','execEndFilter','execMinDurFilter'
+    ].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    loadMoreExecutions(true);
+}
+
+// --- Date helpers for free-text timestamp inputs ---
+
+// Parse "DD/MM/YYYY HH:mm" → Date, returns null if invalid or empty
+function parseExecDate(str) {
+    if (!str || !str.trim()) return null;
+    const m = str.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})$/);
+    if (!m) return null;
+    const dt = new Date(parseInt(m[3]), parseInt(m[2]) - 1, parseInt(m[1]), parseInt(m[4]), parseInt(m[5]));
+    return isNaN(dt.getTime()) ? null : dt;
+}
+
+// Format Date → "DD/MM/YYYY HH:mm"
+function formatExecDate(d) {
+    const p = n => String(n).padStart(2, '0');
+    return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// Apply button handler — the ONLY way to trigger a filtered reload
+function applyExecFilters() {
+    loadMoreExecutions(true);
+}
+
+// Builds the two-row executions thead (headers + filter row) and wires events.
+// Called on first page load AND every time the executions tab is activated.
+function initExecutionsHeader() {
+    const thead = document.getElementById('tableHeader') || document.getElementById('table-head');
+    if (!thead) return;
+    thead.innerHTML = `
+        <tr class="text-gray-400 text-xs uppercase tracking-widest border-b border-gray-800/50">
+            <th class="px-4 pt-3 pb-1 font-medium text-gray-600">#</th>
+            <th class="px-4 pt-3 pb-1 font-medium">Workflow</th>
+            <th class="px-4 pt-3 pb-1 font-medium">Status</th>
+            <th class="px-4 pt-3 pb-1 font-medium">Started</th>
+            <th class="px-4 pt-3 pb-1 font-medium">Ended</th>
+            <th class="px-4 pt-3 pb-1 font-medium">Run Time</th>
+            <th class="px-4 pt-3 pb-1 font-medium"></th>
+        </tr>
+        <tr class="bg-black/20 border-b border-gray-800/50">
+            <td class="px-3 py-3">
+                <input type="number" id="execIdFilter" min="1" placeholder="ID…"
+                    class="bg-black/40 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-indigo-500 w-16 text-center" />
+            </td>
+            <td class="px-3 py-3">
+                <select id="execWorkflowFilter"
+                    class="bg-black/40 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-indigo-500 w-full max-w-[180px] cursor-pointer">
+                    <option value="">All Workflows</option>
+                </select>
+            </td>
+            <td class="px-3 py-3">
+                <select id="execStatusFilter"
+                    class="bg-black/40 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-indigo-500 w-full cursor-pointer">
+                    <option value="">Any Status</option>
+                    <option value="success">Success</option>
+                    <option value="error">Error</option>
+                    <option value="canceled">Canceled</option>
+                    <option value="crashed">Crashed</option>
+                </select>
+            </td>
+            <td class="px-3 py-3">
+                <input type="text" id="execStartFilter" placeholder="DD/MM/YYYY HH:mm"
+                    class="bg-black/40 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-indigo-500 font-mono w-36" />
+            </td>
+            <td class="px-3 py-3">
+                <input type="text" id="execEndFilter" placeholder="DD/MM/YYYY HH:mm"
+                    class="bg-black/40 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-indigo-500 font-mono w-36" />
+            </td>
+            <td class="px-3 py-3">
+                <div class="flex items-center gap-1">
+                    <span class="text-gray-600 text-[10px]">&gt;</span>
+                    <input type="number" id="execMinDurFilter" min="0" step="0.1" placeholder="—"
+                        class="bg-black/40 border border-gray-700 rounded px-1.5 py-1 text-xs text-gray-300 focus:outline-none focus:border-indigo-500 w-12 text-center" />
+                    <span class="text-gray-600 text-[10px]">s</span>
+                </div>
+            </td>
+            <td class="px-3 py-3">
+                <div class="flex flex-col items-center gap-1">
+                    <button onclick="applyExecFilters()" title="Apply filters"
+                        class="w-[26px] h-[22px] text-[9px] bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-600/50 hover:border-indigo-400/60 active:bg-indigo-600/70 transition-colors rounded flex items-center justify-center">
+                        <i class="fa-solid fa-check"></i>
+                    </button>
+                    <button onclick="clearExecFilters()" title="Clear all filters"
+                        class="w-[26px] h-[22px] text-[9px] bg-gray-700/20 border border-gray-600/30 text-gray-400 hover:bg-n8n-primary/20 hover:border-n8n-primary/40 hover:text-n8n-primary active:bg-n8n-primary/30 active:border-n8n-primary/60 transition-colors rounded flex items-center justify-center">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+            </td>
+        </tr>
+    `;
+    // Populate workflow dropdown from cache
+    populateExecWorkflowDropdown(lastTopWorkflows);
+    // Auto-fill end = start + 10 min when start is typed and end is still empty
+    const startEl = document.getElementById('execStartFilter');
+    const endEl   = document.getElementById('execEndFilter');
+    if (startEl && endEl) {
+        startEl.addEventListener('change', () => {
+            const d = parseExecDate(startEl.value);
+            if (d && !endEl.value.trim()) {
+                endEl.value = formatExecDate(new Date(d.getTime() + 10 * 60 * 1000));
+            }
+        });
+    }
+    // Enter key on any filter input/select fires Apply
+    thead.querySelectorAll('input, select').forEach(el => {
+        el.addEventListener('keydown', e => { if (e.key === 'Enter') applyExecFilters(); });
+    });
+}
+
 // --- SECTION 4.5: ERROR MODAL LOGIC ---
 async function showError(execId, hasSnapshot = false) {
     const modal = document.getElementById('errorModal');
@@ -608,7 +757,8 @@ async function loadMoreExecutions(reset = false) {
 
     if (executions.length > 0) {
         executions.forEach(exec => {
-            const timeString = window.formatTime(exec.startedAt, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+            const startStr = window.formatTime(exec.startedAt, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+            const endStr   = window.formatTime(exec.stoppedAt, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
             const duration = exec.duration < 1 ? Math.round(exec.duration * 1000) + 'ms' : parseFloat(exec.duration).toFixed(3) + 's';
             
             const isError = exec.status !== 'success';
@@ -624,7 +774,8 @@ async function loadMoreExecutions(reset = false) {
                     <td class="p-4 text-gray-500 font-mono">#${exec.exec_id}</td>
                     <td class="p-4 text-white">${exec.name}</td>
                     <td class="p-4">${statusHtml}</td>
-                    <td class="p-4 text-n8n-text">${timeString}</td>
+                    <td class="p-4 text-n8n-text">${startStr}</td>
+                    <td class="p-4 text-n8n-text">${endStr}</td>
                     <td class="p-4 text-n8n-text">${duration}</td>
                 </tr>
             `;
@@ -637,19 +788,26 @@ async function loadMoreExecutions(reset = false) {
     isFetchingExecutions = false;
 }
 
-function setupInfiniteScroll() {
-    const scrollContainer = document.querySelector('.overflow-x-auto') || document.body;
-    const trigger = document.getElementById('scrollTrigger') || document.getElementById('scroll-trigger');
+function hasActiveFilters() {
+    return ['execWorkflowFilter','execStatusFilter','execIdFilter',
+            'execStartFilter','execEndFilter','execMinDurFilter']
+        .some(id => {
+            const el = document.getElementById(id);
+            return el && el.value && el.value.trim() !== '';
+        });
+}
 
+function setupInfiniteScroll() {
+    const trigger = document.getElementById('scrollTrigger') || document.getElementById('scroll-trigger');
     if (!trigger) return;
 
     const observer = new IntersectionObserver((entries) => {
         if (entries[0].isIntersecting && currentTab === 'executions' && !isFetchingExecutions) {
             loadMoreExecutions();
         }
-    }, { 
-        root: null, 
-        threshold: 0.1 
+    }, {
+        root: null,
+        threshold: 0.1
     });
 
     observer.observe(trigger);
@@ -662,7 +820,8 @@ async function refreshData() {
         updateLineChart(data.hourlyData);
         if (data.topWorkflows) {
             updateDoughnutChart(data.topWorkflows);
-            populateDropdown(data.topWorkflows); 
+            populateDropdown(data.topWorkflows);
+            lastTopWorkflows = data.topWorkflows; // cache for exec filter
         }
     }
 
@@ -747,8 +906,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     initCharts();
     setupInfiniteScroll();
     await initDateFilter();
-    refreshData(); 
-    loadMoreExecutions(true); 
+    await refreshData();     // await so lastTopWorkflows is populated before header renders
+    initExecutionsHeader();  // build filter row on first load
+    loadMoreExecutions(true);
 
     const timeFilter = document.getElementById('timeRangeFilter');
     if (timeFilter) timeFilter.addEventListener('change', refreshData);
@@ -787,15 +947,8 @@ async function switchTab(tabName) {
     if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-gray-500">Loading...</td></tr>';
 
     if (tabName === 'executions') {
-        if (thead) thead.innerHTML = `
-            <tr class="text-gray-400 text-sm">
-                <th class="p-4 font-medium">ID</th>
-                <th class="p-4 font-medium">Workflow</th>
-                <th class="p-4 font-medium">Status</th>
-                <th class="p-4 font-medium">Started</th>
-                <th class="p-4 font-medium">Run Time</th>
-            </tr>
-        `;
+        initExecutionsHeader(); // rebuild filter row + wire events
+        const scrollTrigger = document.getElementById('scrollTrigger') || document.getElementById('scroll-trigger');
         if (scrollTrigger) {
             scrollTrigger.style.display = 'block';
             scrollTrigger.innerHTML = '';

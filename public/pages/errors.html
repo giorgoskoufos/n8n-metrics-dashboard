@@ -10,47 +10,9 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        'n8n-primary': '#ff6f5c',
-                        'n8n-dark': '#121212',
-                        'n8n-card': '#1a1a1a',
-                        'n8n-text': '#eeeeee',
-                        'n8n-success': '#4ade80',
-                        'n8n-danger': '#f87171',
-                    }
-                }
-            }
-        }
-    </script>
-    <style>
-        body {
-            font-family: 'Open Sans', sans-serif;
-            background-color: #121212;
-            color: #eeeeee;
-        }
-
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 4px;
-            height: 4px;
-        }
-
-        .custom-scrollbar::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #333;
-            border-radius: 4px;
-        }
-
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-            background: #444;
-        }
-    </style>
+    <script src="../js/tailwind.config.js"></script>
+    <script>__applyErrorsTheme();</script>
+    <link rel="stylesheet" href="../css/errors.css">
 </head>
 
 <body class="p-4 md:p-8">

@@ -1,0 +1,27 @@
+/* ============================================
+   errors.css — pages/errors.html
+   ============================================ */
+
+body {
+    font-family: 'Open Sans', sans-serif;
+    background-color: #121212;
+    color: #eeeeee;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #444;
+}
