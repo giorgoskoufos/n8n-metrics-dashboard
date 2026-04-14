@@ -84,3 +84,58 @@ select option {
     background-color: #222222;
     color: #eeeeee;
 }
+
+/* ── Skeleton Loading States ─────────────────────────── */
+@keyframes sk-shimmer {
+    to { background-position: 200% center; }
+}
+
+/* Base shimmer block */
+.sk {
+    background: linear-gradient(90deg, #242424 25%, #2e2e2e 50%, #242424 75%);
+    background-size: 200% auto;
+    animation: sk-shimmer 1.6s linear infinite;
+    border-radius: 4px;
+}
+
+/* Overlay that covers a relative-positioned card/chart wrapper */
+.sk-overlay {
+    position: absolute;
+    inset: 0;
+    background: #222222;
+    z-index: 10;
+    border-radius: inherit;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 12px 0;
+    justify-content: flex-end;
+    transition: opacity 0.5s ease;
+}
+
+/* Fade-out when data is ready */
+.sk-overlay.done {
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* KPI card variant — top-aligned label + value bars */
+.sk-overlay.sk-kpi {
+    justify-content: flex-start;
+    padding: 20px;
+    gap: 12px;
+}
+
+/* Fake bars row — children are individual bars */
+.sk-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 5px;
+    flex: 1;
+}
+
+.sk-bars > .sk-bar {
+    flex: 1;
+    min-width: 0;
+    border-radius: 4px 4px 0 0;
+}

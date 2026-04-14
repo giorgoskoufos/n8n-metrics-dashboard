@@ -102,6 +102,10 @@
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div class="bg-n8n-card p-6 rounded-xl border border-gray-800 relative overflow-hidden">
+                <div id="kpiSk1" class="sk-overlay sk-kpi" aria-hidden="true">
+                    <div class="sk h-2.5 w-20"></div>
+                    <div class="sk h-8 w-28"></div>
+                </div>
                 <p class="text-gray-400 text-sm mb-1">Total Executions</p>
                 <div class="flex items-baseline gap-3">
                     <h2 id="totalExecutions" class="text-3xl font-bold text-white">0</h2>
@@ -109,13 +113,21 @@
                 </div>
             </div>
             <div class="bg-n8n-card p-6 rounded-xl border border-gray-800 relative overflow-hidden">
+                <div id="kpiSk2" class="sk-overlay sk-kpi" aria-hidden="true">
+                    <div class="sk h-2.5 w-14"></div>
+                    <div class="sk h-8 w-20"></div>
+                </div>
                 <p class="text-gray-400 text-sm mb-1">Errors</p>
                 <div class="flex items-baseline gap-3">
                     <h2 id="errorCount" class="text-3xl font-bold text-n8n-danger">0</h2>
                     <span id="trendError" class="text-xs font-semibold px-2 py-0.5 rounded-full hidden"></span>
                 </div>
             </div>
-            <div class="bg-n8n-card p-6 rounded-xl border border-gray-800">
+            <div class="bg-n8n-card p-6 rounded-xl border border-gray-800 relative overflow-hidden">
+                <div id="kpiSk3" class="sk-overlay sk-kpi" aria-hidden="true">
+                    <div class="sk h-2.5 w-20"></div>
+                    <div class="sk h-8 w-24"></div>
+                </div>
                 <p class="text-gray-400 text-sm mb-1">Avg. Duration</p>
                 <h2 id="avgDuration" class="text-3xl font-bold text-n8n-primary">0s</h2>
             </div>
@@ -128,6 +140,22 @@
                     <h3 class="text-sm font-semibold text-gray-400">Execution Timeline</h3>
                 </div>
                 <div class="flex-1 relative">
+                    <div id="lineChartSk" class="sk-overlay" aria-hidden="true">
+                        <div class="sk-bars">
+                            <div class="sk sk-bar" style="height:42%"></div>
+                            <div class="sk sk-bar" style="height:68%"></div>
+                            <div class="sk sk-bar" style="height:52%"></div>
+                            <div class="sk sk-bar" style="height:82%"></div>
+                            <div class="sk sk-bar" style="height:47%"></div>
+                            <div class="sk sk-bar" style="height:73%"></div>
+                            <div class="sk sk-bar" style="height:61%"></div>
+                            <div class="sk sk-bar" style="height:88%"></div>
+                            <div class="sk sk-bar" style="height:55%"></div>
+                            <div class="sk sk-bar" style="height:76%"></div>
+                            <div class="sk sk-bar" style="height:39%"></div>
+                            <div class="sk sk-bar" style="height:65%"></div>
+                        </div>
+                    </div>
                     <canvas id="lineChart"></canvas>
                 </div>
             </div>
@@ -135,6 +163,19 @@
             <div class="bg-n8n-card p-6 rounded-xl border border-gray-800 h-80 flex flex-col">
                 <h3 class="text-sm font-semibold mb-4 text-gray-400">Top Workflows</h3>
                 <div class="flex-1 relative min-h-0">
+                    <div id="doughnutSk" class="sk-overlay flex items-center justify-center flex-col gap-4" aria-hidden="true">
+                        <div class="relative">
+                            <div class="sk w-32 h-32 rounded-full"></div>
+                            <div class="absolute inset-0 flex items-center justify-center">
+                                <div class="w-[68px] h-[68px] rounded-full bg-[#222]"></div>
+                            </div>
+                        </div>
+                        <div class="flex flex-col items-center gap-2">
+                            <div class="sk h-2 w-24 rounded"></div>
+                            <div class="sk h-2 w-16 rounded"></div>
+                            <div class="sk h-2 w-20 rounded"></div>
+                        </div>
+                    </div>
                     <canvas id="doughnutChart"></canvas>
                 </div>
                 <div id="doughnutLegend"></div>
@@ -165,6 +206,26 @@
                     </div>
                 </div>
                 <div class="flex-1 relative overflow-x-auto overflow-y-hidden custom-scrollbar">
+                    <div id="concurrencySk" class="sk-overlay" aria-hidden="true">
+                        <div class="sk-bars">
+                            <div class="sk sk-bar" style="height:30%"></div>
+                            <div class="sk sk-bar" style="height:55%"></div>
+                            <div class="sk sk-bar" style="height:72%"></div>
+                            <div class="sk sk-bar" style="height:48%"></div>
+                            <div class="sk sk-bar" style="height:65%"></div>
+                            <div class="sk sk-bar" style="height:90%"></div>
+                            <div class="sk sk-bar" style="height:78%"></div>
+                            <div class="sk sk-bar" style="height:62%"></div>
+                            <div class="sk sk-bar" style="height:45%"></div>
+                            <div class="sk sk-bar" style="height:70%"></div>
+                            <div class="sk sk-bar" style="height:58%"></div>
+                            <div class="sk sk-bar" style="height:83%"></div>
+                            <div class="sk sk-bar" style="height:67%"></div>
+                            <div class="sk sk-bar" style="height:40%"></div>
+                            <div class="sk sk-bar" style="height:76%"></div>
+                            <div class="sk sk-bar" style="height:53%"></div>
+                        </div>
+                    </div>
                     <div class="h-full min-w-[1400px] md:min-w-full">
                         <canvas id="concurrencyChart"></canvas>
                     </div>

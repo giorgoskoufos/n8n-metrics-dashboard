@@ -295,6 +295,7 @@ function updateKpiCards(summary) {
     if (elFailed) elFailed.innerText = errors.toLocaleString();
     if (elRate) elRate.innerText = errorRate + '%';
     if (elTime) elTime.innerText = avgTime + 's';
+    ['kpiSk1','kpiSk2','kpiSk3'].forEach(id => document.getElementById(id)?.classList.add('done'));
 
     // Update Trend Badges
     const trendTotalEl = document.getElementById('trendTotal');
@@ -350,6 +351,7 @@ function updateLineChart(chartData) {
     lineChart.data.datasets[0].data = successData; 
     lineChart.data.datasets[1].data = errorData;   
     lineChart.update();
+    document.getElementById('lineChartSk')?.classList.add('done');
 }
 
 function updateDoughnutChart(workflows) {
@@ -386,6 +388,7 @@ function updateDoughnutChart(workflows) {
     
     doughnutChart.data.datasets[0].backgroundColor = backgroundColors;
     doughnutChart.update();
+    document.getElementById('doughnutSk')?.classList.add('done');
 }
 
 function updateConcurrencyChart(data) {
@@ -431,6 +434,7 @@ function updateConcurrencyChart(data) {
     concurrencyChart.data.labels = processedLabels;
     concurrencyChart.data.datasets[0].data = processedData;
     concurrencyChart.update();
+    document.getElementById('concurrencySk')?.classList.add('done');
 }
 
 async function fetchConcurrencyDetails(timestamp, windowSize = 5) {
