@@ -45,6 +45,10 @@
                         class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
                         <i class="fa-solid fa-gear fa-fw mr-3 w-4 text-gray-400"></i>Settings
                     </a>
+                    <button id="syncBtn" onclick="forceDbSync()"
+                        class="w-full text-left px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
+                        <i id="syncIcon" class="fa-solid fa-rotate fa-fw mr-3 w-4 text-indigo-400"></i>Sync Data
+                    </button>
                 </div>
             </div>
             <div class="text-right">
@@ -205,9 +209,16 @@
                 </div>
                 <label class="block text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-1">Error
                     Description</label>
-                <div id="modalErrorMessage"
-                    class="bg-red-900/10 p-4 rounded-lg border border-red-500/20 text-red-400 font-mono text-xs leading-relaxed mb-8 max-h-[300px] overflow-y-auto whitespace-pre-wrap">
-                    Loading...</div>
+                <div class="relative group">
+                    <div id="modalErrorMessage"
+                        class="bg-red-900/10 p-4 pr-10 rounded-lg border border-red-500/20 text-red-400 font-mono text-xs leading-relaxed mb-8 max-h-[300px] overflow-y-auto whitespace-pre-wrap">
+                        Loading...</div>
+                    <button onclick="copyErrorMessage()" 
+                        class="absolute top-2 right-3 sm:top-3 sm:right-8 p-2 text-white/40 hover:text-white transition-all bg-black/40 hover:bg-black/60 rounded border border-white/10 z-20"
+                        title="Copy Error Content">
+                        <i id="copyIcon" class="fa-regular fa-copy text-[11px] sm:text-[10px]"></i>
+                    </button>
+                </div>
 
                 <div class="flex justify-between items-center">
                     <p class="text-[11px] text-gray-500 italic"><i
@@ -221,6 +232,7 @@
         </div>
     </div>
 
+    <script src="../logic/global_functions.js"></script>
     <script src="../logic/errors.js"></script>
     <script>
         // Copy-Paste Burger Logic for speed

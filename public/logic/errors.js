@@ -252,19 +252,30 @@ function closeErrorModal() {
     if (modal) {
         modal.classList.add('hidden');
         modal.classList.remove('flex');
+        // Reset copy icon if modal closes
+        const icon = document.getElementById('copyIcon');
+        if (icon) icon.className = 'fa-regular fa-copy';
     }
 }
 
-// Helper: Auth fetch
-async function fetchWithAuth(url, options = {}) {
-    const token = localStorage.getItem('n8n_auth_token');
-    if (!token) {
-        window.location.href = 'login.html';
-        return;
+async function copyErrorMessage() {
+    const msg = document.getElementById('modalErrorMessage')?.innerText;
+    const icon = document.getElementById('copyIcon');
+    if (!msg || msg === 'Loading...' || msg === 'Analyzing trace...') return;
+
+    try {
+        await navigator.clipboard.writeText(msg);
+        if (icon) {
+            icon.className = 'fa-solid fa-check text-green-400';
+            setTimeout(() => {
+                icon.className = 'fa-regular fa-copy';
+            }, 2000);
+        }
+    } catch (err) {
+        console.error('Failed to copy text: ', err);
     }
-    const headers = { ...options.headers, 'Authorization': `Bearer ${token}` };
-    return fetch(url, { ...options, headers });
 }
+
 
 function formatTimeNice(isoStr) {
     const date = new Date(isoStr);

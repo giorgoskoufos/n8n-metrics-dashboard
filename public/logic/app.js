@@ -78,35 +78,6 @@ async function checkN8nHealth() {
 
 document.addEventListener('DOMContentLoaded', checkN8nHealth);
 
-// --- SECTION 1.7: AUTHENTICATION HELPER ---
-async function fetchWithAuth(url, options = {}) {
-    const token = localStorage.getItem('n8n_auth_token');
-    
-    // Case 1: No token present (e.g. user cleared localStorage)
-    if (!token) {
-        alert("Authentication required!");
-        window.location.href = 'pages/login.html'; // Redirect to login
-        throw new Error("No token found");
-    }
-
-    const headers = {
-        ...options.headers,
-        'Authorization': `Bearer ${token}`
-    };
-
-    const response = await fetch(url, { ...options, headers });
-
-    // Case 2: Server rejected token (e.g. invalid signature or expired after 8h)
-    if (response.status === 401 || response.status === 403) {
-        localStorage.removeItem('n8n_auth_token'); // Clear the invalid token
-        alert("Session expired or invalid. Please login again.");
-        window.location.href = 'pages/login.html'; // Redirect to login
-        throw new Error("Unauthorized");
-    }
-
-    return response;
-}
-
 // --- SECTION 2: CHART INITIALIZATION ---
 function initCharts() {
     const ctxLine = document.getElementById('lineChart').getContext('2d');
@@ -724,6 +695,27 @@ function closeErrorModal() {
         modal.classList.add('hidden');
         modal.style.display = 'none';
         document.body.style.overflow = 'auto'; // Unlock
+        // Reset copy icon if modal closes
+        const icon = document.getElementById('copyIcon');
+        if (icon) icon.className = 'fa-regular fa-copy';
+    }
+}
+
+async function copyErrorMessage() {
+    const msg = document.getElementById('modalErrorMessage')?.innerText;
+    const icon = document.getElementById('copyIcon');
+    if (!msg || msg === 'Loading...' || msg === 'Analyzing trace...') return;
+    
+    try {
+        await navigator.clipboard.writeText(msg);
+        if (icon) {
+            icon.className = 'fa-solid fa-check text-green-400';
+            setTimeout(() => {
+                icon.className = 'fa-regular fa-copy';
+            }, 2000);
+        }
+    } catch (err) {
+        console.error('Failed to copy text: ', err);
     }
 }
 

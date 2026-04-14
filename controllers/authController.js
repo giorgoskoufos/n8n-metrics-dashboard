@@ -22,8 +22,8 @@ exports.login = async (req, res) => {
         }
 
         const token = jwt.sign(
-            { id: user.id, email: user.email, firstName: user.firstName }, 
-            JWT_SECRET, 
+            { id: user.id, email: user.email, firstName: user.firstName },
+            JWT_SECRET,
             { expiresIn: '8h' }
         );
 
@@ -34,8 +34,8 @@ exports.login = async (req, res) => {
             [user.id, user.email]
         );
 
-        res.json({ 
-            message: 'Successful Login!', 
+        res.json({
+            message: 'Successful Login!',
             token: token,
             user: { firstName: user.firstName, lastName: user.lastName, email: user.email }
         });

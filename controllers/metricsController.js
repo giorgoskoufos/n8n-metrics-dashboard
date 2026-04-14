@@ -333,11 +333,13 @@ exports.getExecutionError = async (req, res) => {
 };
 
 exports.forceSync = async (req, res) => {
+    console.log('[DEBUG] Manual sync triggered from UI burger menu');
     const { syncData } = require('../config/syncJob');
     try {
         await syncData(true);
         res.json({ message: 'Sync Complete' });
     } catch(err) {
+        console.error('[ERORR] Manual Sync failed:', err);
         res.status(500).json({ error: 'Force Sync Failed' });
     }
 };

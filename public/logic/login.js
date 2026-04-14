@@ -10,6 +10,16 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
+    // Check for expired session reason
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('reason') === 'expired') {
+        const errorDiv = document.getElementById('loginError');
+        if (errorDiv) {
+            errorDiv.innerText = 'Session expired. Please log in again.';
+            errorDiv.classList.remove('hidden');
+        }
+    }
+
     // 2. Login Form Handling
     const loginForm = document.getElementById('loginForm');
     

@@ -2,7 +2,7 @@
 // Authentication Guard - n8n Analytics
 // ==========================================
 
-const isInPagesFolder = window.location.pathname.includes('/pages/');
+window.isInPagesFolder = window.location.pathname.includes('/pages/');
 
 (function enforceLogin() {
     const token = localStorage.getItem('n8n_auth_token');
@@ -15,7 +15,6 @@ const isInPagesFolder = window.location.pathname.includes('/pages/');
     }
 })();
 
-// Global Logout Function
 window.logout = function() {
     console.log("Logging out...");
     localStorage.removeItem('n8n_auth_token');

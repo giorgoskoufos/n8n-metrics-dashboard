@@ -54,6 +54,10 @@
                         class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
                         <i class="fa-solid fa-gear fa-fw mr-3 w-4 text-gray-400"></i>Settings
                     </a>
+                    <button id="syncBtn" onclick="forceDbSync()"
+                        class="w-full text-left px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center border-t border-gray-800/50">
+                        <i id="syncIcon" class="fa-solid fa-rotate fa-fw mr-3 w-4 text-indigo-400"></i>Sync Data
+                    </button>
                     <button onclick="logout()"
                         class="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-red-900/30 hover:text-red-300 transition-colors flex items-center bg-red-900/10">
                         <i class="fa-solid fa-right-from-bracket fa-fw mr-3 w-4"></i>Logout
@@ -202,7 +206,8 @@
 
         <!-- Scripts -->
         <script src="../logic/app.js"></script>
-        <script src="../logic/settings.js"></script>
+        <script src="../logic/global_functions.js"></script>
+    <script src="../logic/settings.js"></script>
         <script>
             // Burger Menu Toggle Logic
             const burgerBtn = document.getElementById('burgerBtn');
