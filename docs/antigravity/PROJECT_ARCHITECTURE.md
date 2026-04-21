@@ -41,6 +41,13 @@ Runs as a background cron worker (driven by `node-cron` in `server.js`).
 - **Dynamic Navigation**: A fully stateful, context-aware mobile Burger Menu engineered with backdrop blurs governing the multi-page Analytics environment.
 - **Chat Widget**: Fluid resizing and robust visual viewport listeners for iOS keyboards.
 - **Manual Sync Engine**: A spinning "Sync Data" button wired directly to the `metricsRoute` to bypass local cron schedules.
+- **Precision Filter Architecture**: Employs a dual-mode filtering system:
+  - **Macro Presets**: System-wide ISO rolling windows calculated on-the-fly for KPIs.
+  - **Component-Scoped**: Independent local filters (e.g., Execution Volume calendar) that target specific visualizations without polluting global state.
+
+## 6. Data Integrity & Persistence
+- Introduced `sqlite3` to manage internal state via `dashboard.sqlite`. 
+- Moved `dashboard_chat_history` entirely off the n8n Database, resolving the critical "TypeORM Bricking" vulnerability caused by foreign key tampering of the vendor `user` schema.
 
 ## 7. Error Intelligence Hub
 A specialized diagnostic subsystem for high-precision troubleshooting.

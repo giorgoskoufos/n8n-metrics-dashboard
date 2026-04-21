@@ -30,6 +30,10 @@ Fundamentally shifted the application away from direct OLAP processing on the n8
 - **SQLite State Isolation**: 
     - Introduced `sqlite3` to manage internal state via `dashboard.sqlite`. 
     - Moved `dashboard_chat_history` entirely off the n8n Database, resolving the critical "TypeORM Bricking" vulnerability caused by foreign key tampering of the vendor `user` schema.
+- **Manual Sync Engine**: A spinning "Sync Data" button wired directly to the `metricsRoute` to bypass local cron schedules.
+- **Precision Filter Architecture**: Employs a dual-mode filtering system:
+  - **Macro Presets**: System-wide ISO rolling windows calculated on-the-fly for KPIs.
+  - **Component-Scoped**: Independent local filters (e.g., Execution Volume calendar) that target specific visualizations without polluting global state.
 - **Sync Engine**: 
     - Built a robust, incremental ETL job (`config/syncJob.js`) that safely mirrors `workflow_entity` and `execution_entity`.
     - Protected `syncData()` with a Node.js asynchronous Mutex lock to prevent transaction collisions between automated cron beats and manual triggers.
@@ -88,3 +92,21 @@ Successfully pivoted the Error analytics framework from a bird's-eye view to a h
     - Built one-click **CSV/JSON extractors** that package both failing node data and upstream branch origins into portable audit logs.
 - **Mobile-First Responsive Audit**:
     - Reworked card height dynamics (`h-auto` transitions) and implemented robust horizontal table scrolling (`min-w-[700px]`) to maintain 100% diagnostic usability on mobile devices.
+
+---
+
+## 10. Precision Filtering & Component Restoration (Latest)
+Focused on architectural precision and restoring lost UI functionality for granular data interrogation.
+
+- **High-Precision Macro Presets**: 
+    - Replaced day-based filtering with strict ISO-timestamp rolling windows (24h, 48h, 7d).
+    - Hardened the backend (`metricsController.js`) to handle milliseconds for exact boundary accuracy.
+- **Execution Volume (Concurrency) Restoration**:
+    - Recovered the Daily Calendar (`trafficDate`) and Interval selector (5m, 10m, 30m) for execution volume analysis.
+    - Implemented `setConcPreset` for independent chart control, resolving ID conflicts with global filters.
+- **Data Table Intelligence**:
+    - Restored column-level filters (ID, Workflow, Status, Date Range) for the Executions Table.
+    - Ensured boot-time initialization via `initExecutionsHeader()` on page load.
+- **UX Animation & Safety**:
+    - Integrated targeted `filter-loading-pulse` animations for immediate visual feedback.
+    - Implemented `initDashboard()` environment check in `app.js` to prevent script crashes on non-relevant pages (settings.html).

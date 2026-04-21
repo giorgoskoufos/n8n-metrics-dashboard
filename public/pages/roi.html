@@ -21,51 +21,12 @@
     <link rel="manifest" href="../assets/site.webmanifest">
 </head>
 <body class="p-4 md:p-8">
-    <!-- Backdrop Overlay -->
-    <div id="burgerOverlay" class="fixed inset-0 bg-n8n-dark/40 backdrop-blur-md z-40 hidden opacity-0 transition-opacity duration-300"></div>
+
     
     <div class="max-w-7xl mx-auto">
         
-        <header class="flex flex-row justify-between items-center mb-8 gap-4 relative z-50">
-            <div class="relative">
-                <button id="burgerBtn" class="p-3 text-gray-400 hover:text-white transition-colors bg-n8n-card border border-gray-700 rounded-lg focus:outline-none flex items-center justify-center">
-                    <i class="fa-solid fa-bars fa-fw text-lg"></i>
-                </button>
-                <div id="burgerMenu" class="absolute left-0 mt-2 w-56 bg-n8n-card border border-gray-700 rounded-lg shadow-2xl hidden flex-col z-50 overflow-hidden divide-y divide-gray-800">
-                    <a href="../index.html" class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
-                        <i class="fa-solid fa-chart-pie fa-fw mr-3 w-4"></i>Dashboard
-                    </a>
-                    <a href="errors.html" class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
-                        <i class="fa-solid fa-triangle-exclamation fa-fw mr-3 w-4 text-red-400"></i>Error Analytics
-                    </a>
-                    <a href="roi.html" class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
-                        <i class="fa-solid fa-clock fa-fw mr-3 w-4 text-green-400"></i>ROI Analytics
-                    </a>
-                    <a href="settings.html" class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
-                        <i class="fa-solid fa-gear fa-fw mr-3 w-4 text-gray-400"></i>Settings
-                    </a>
-                    <button id="syncBtn" onclick="forceDbSync()"
-                        class="w-full text-left px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center border-t border-gray-800/50">
-                        <i id="syncIcon" class="fa-solid fa-rotate fa-fw mr-3 w-4 text-indigo-400"></i>Sync Data
-                    </button>
-                    <button onclick="logout()" class="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-red-900/30 hover:text-red-300 transition-colors flex items-center bg-red-900/10">
-                        <i class="fa-solid fa-right-from-bracket fa-fw mr-3 w-4"></i>Logout
-                    </button>
-                    <div id="n8nHealthIndicator" class="px-4 py-3 border-t border-gray-800 flex items-center bg-black/40 text-[10px] text-gray-500 justify-center uppercase tracking-widest font-semibold">
-                        <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Checking
-                    </div>
-                </div>
-            </div>
-            <div class="flex items-center gap-4">
-                <div class="hidden md:flex items-center justify-center w-10 h-10 rounded-xl bg-white/5 border border-white/10 shadow-inner">
-                    <img src="../assets/n8n_db.svg" alt="n8n logo" class="w-7 h-7 object-contain">
-                </div>
-                <div class="text-right">
-                    <h1 class="text-xl md:text-2xl font-bold text-white">ROI Analytics</h1>
-                    <p class="text-xs md:text-sm text-gray-400">Automation Time Savings</p>
-                </div>
-            </div>
-        </header>
+            <!-- Global Header Placeholder -->
+            <div id="header-target" data-title="ROI Analytics" data-subtitle="Automation Time Savings"></div>
 
         <div class="flex justify-end mb-6 w-full">
             <div class="flex items-center gap-3 bg-n8n-card border border-gray-800 rounded-lg px-4 py-2 w-full sm:w-64 hover:border-gray-700 transition-colors">
@@ -131,40 +92,6 @@
     <script src="../logic/app.js"></script>
     <script src="../logic/global_functions.js"></script>
     <script src="../logic/roi.js"></script>
-    <script>
-        // Burger Menu Toggle Logic
-        const burgerBtn = document.getElementById('burgerBtn');
-        const burgerMenu = document.getElementById('burgerMenu');
-        const burgerOverlay = document.getElementById('burgerOverlay');
-        
-        function toggleMenu(show) {
-            if (show) {
-                burgerMenu.classList.remove('hidden');
-                burgerMenu.classList.add('flex');
-                burgerOverlay.classList.remove('hidden');
-                setTimeout(() => burgerOverlay.classList.add('opacity-100'), 10);
-            } else {
-                burgerMenu.classList.add('hidden');
-                burgerMenu.classList.remove('flex');
-                burgerOverlay.classList.remove('opacity-100');
-                setTimeout(() => burgerOverlay.classList.add('hidden'), 300);
-            }
-        }
-
-        burgerBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const isHidden = burgerMenu.classList.contains('hidden');
-            toggleMenu(isHidden);
-        });
-
-        // Close menu when clicking outside or on overlay
-        document.addEventListener('click', (e) => {
-            if (!burgerBtn.contains(e.target) && !burgerMenu.contains(e.target)) {
-                toggleMenu(false);
-            }
-        });
-
-        burgerOverlay.addEventListener('click', () => toggleMenu(false));
-    </script>
+    <script src="../logic/header.js"></script>
 </body>
 </html>

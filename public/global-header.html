@@ -1,0 +1,57 @@
+<!-- Global Header Template -->
+<!-- Backdrop Overlay -->
+<div id="burgerOverlay"
+    class="fixed inset-0 bg-n8n-dark/40 backdrop-blur-md z-40 hidden opacity-0 transition-opacity duration-300">
+</div>
+
+<header class="flex flex-row justify-between items-center mb-8 gap-4 relative z-50">
+    <!-- LEFT: Burger Section -->
+    <div id="burger-insertion-point" class="relative">
+        <button id="burgerBtn"
+            class="flex items-center justify-center w-10 h-10 rounded-xl bg-white/5 border border-white/10 shadow-inner hover:bg-white/10 transition-all focus:outline-none">
+            <i class="fa-solid fa-bars fa-fw text-lg text-gray-400"></i>
+        </button>
+        <div id="burgerMenu"
+            class="absolute left-0 mt-2 w-56 bg-n8n-card border border-gray-700 rounded-lg shadow-2xl hidden flex-col z-50 overflow-hidden divide-y divide-gray-800">
+            <a href="index.html" id="nav-home"
+                class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
+                <i class="fa-solid fa-chart-pie fa-fw mr-3 w-4"></i>Dashboard
+            </a>
+            <a href="pages/errors.html" id="nav-errors"
+                class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
+                <i class="fa-solid fa-triangle-exclamation fa-fw mr-3 w-4 text-red-400"></i>Error Analytics
+            </a>
+            <a href="pages/roi.html" id="nav-roi"
+                class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
+                <i class="fa-solid fa-clock fa-fw mr-3 w-4 text-green-400"></i>ROI Analytics
+            </a>
+            <a href="pages/settings.html" id="nav-settings"
+                class="px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
+                <i class="fa-solid fa-gear fa-fw mr-3 w-4 text-gray-400"></i>Settings
+            </a>
+            <button id="syncBtn" onclick="forceDbSync()"
+                class="w-full text-left px-4 py-3 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center">
+                <i id="syncIcon" class="fa-solid fa-rotate fa-fw mr-3 w-4 text-indigo-400"></i>Sync Data
+            </button>
+            <button onclick="logout()"
+                class="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-red-900/30 hover:text-red-300 transition-colors flex items-center bg-red-900/10">
+                <i class="fa-solid fa-right-from-bracket fa-fw mr-3 w-4"></i>Logout
+            </button>
+            <div id="n8nHealthIndicator"
+                class="px-4 py-3 border-t border-gray-800 flex items-center bg-black/40 text-[10px] text-gray-500 justify-center uppercase tracking-widest font-semibold">
+                <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Checking
+            </div>
+        </div>
+    </div>
+
+    <!-- RIGHT: Brand Section (Title + Logo) -->
+    <div class="flex items-center gap-4 text-right">
+        <div>
+            <h1 id="headerTitle" class="text-xl md:text-2xl font-bold text-white leading-tight">n8n Dashboard</h1>
+            <p id="headerSubtitle" class="text-xs md:text-sm text-gray-400">Real-time workflow analytics</p>
+        </div>
+        <div class="flex items-center justify-center w-10 h-10 rounded-xl bg-white/5 border border-white/10 shadow-inner">
+            <img id="headerLogo" src="/assets/n8n_db.svg" alt="n8n logo" class="w-7 h-7 object-contain">
+        </div>
+    </div>
+</header>
