@@ -5,94 +5,116 @@ const { parse } = require('flatted');
 exports.getMetrics = async (req, res) => {
     try {
         const targetWorkflow = req.query.workflow; 
-        const timeRange = req.query.timeRange || '24h';
+        const startDate = req.query.startDate;
+        const endDate = req.query.endDate;
 
-        const VALID_RANGES = ['24h', '48h', '7d'];
-        if (!VALID_RANGES.includes(timeRange)) {
-            return res.status(400).json({ error: 'Invalid timeRange. Must be one of: 24h, 48h, 7d' });
+        let startIso, endIso, prevStartIso, prevEndIso;
+        let isCustom = true; 
+        let bucketUnit = 'hour'; 
+        let durationMs;
+
+        if (startDate && endDate) {
+            startIso = new Date(startDate).toISOString();
+            endIso = new Date(endDate).toISOString();
+            durationMs = new Date(endDate).getTime() - new Date(startDate).getTime();
+
+            // Range Cap: 60 days
+            const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
+            if (durationMs > SIXTY_DAYS_MS) {
+                durationMs = SIXTY_DAYS_MS;
+                startIso = new Date(new Date(endDate).getTime() - SIXTY_DAYS_MS).toISOString();
+            }
+            
+            prevEndIso = startIso;
+            prevStartIso = new Date(new Date(startIso).getTime() - durationMs).toISOString();
+
+            if (durationMs > 4 * 24 * 60 * 60 * 1000) {
+                bucketUnit = 'day';
+            }
+        } else {
+            // Robust Fallback: Default to 7 days
+            const now = new Date();
+            durationMs = 7 * 24 * 3600000;
+            startIso = new Date(now.getTime() - durationMs).toISOString();
+            endIso = now.toISOString();
+            prevEndIso = startIso;
+            prevStartIso = new Date(new Date(startIso).getTime() - durationMs).toISOString();
+            bucketUnit = 'day';
         }
 
-        let intervalOffset = '-23 hours';
-        let lookback = '-24 hours';
-        let prevLookbackEnd = '-24 hours';
-        let prevLookbackStart = '-48 hours';
-        let step = '+1 hour';
-        let truncUnitFormat = '%Y-%m-%d %H:00:00';
+        const buildTimeFilter = (val, isRelative = false) => {
+            return isRelative ? `datetime('now', '${val}')` : `datetime('${val}')`;
+        };
 
-        if (timeRange === '48h') {
-            intervalOffset = '-47 hours';
-            lookback = '-48 hours';
-            prevLookbackEnd = '-48 hours';
-            prevLookbackStart = '-96 hours';
-        } else if (timeRange === '7d') {
-            intervalOffset = '-6 days';
-            lookback = '-7 days';
-            prevLookbackEnd = '-7 days';
-            prevLookbackStart = '-14 days';
-            truncUnitFormat = '%Y-%m-%d 00:00:00'; 
-            step = '+1 day';
-        }
+        const currentStart = buildTimeFilter(startIso, !isCustom);
+        const currentEnd = buildTimeFilter(endIso, !isCustom);
+        const prevStart = buildTimeFilter(prevStartIso, !isCustom);
+        const prevEnd = buildTimeFilter(prevEndIso, !isCustom);
+
+        // Standardize filters for all queries
+        const wfFilterClause = targetWorkflow ? 'AND w.name = ?' : '';
+        const wfJoinClause = targetWorkflow ? 'JOIN workflow_entity w ON e."workflowId" = w.id' : '';
+        const params = targetWorkflow ? [targetWorkflow] : [];
 
         const statsQuery = `
             SELECT COUNT(*) as total, 
                    SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error,
                    AVG((julianday("stoppedAt") - julianday("startedAt")) * 86400) as avg_duration
             FROM execution_entity e
-            ${targetWorkflow ? 'JOIN workflow_entity w ON e."workflowId" = w.id' : ''}
-            WHERE datetime(e."startedAt") > datetime('now', '${lookback}')
-            ${targetWorkflow ? 'AND w.name = ?' : ''};
+            ${wfJoinClause}
+            WHERE datetime(e."startedAt") >= ${currentStart} AND datetime(e."startedAt") <= ${currentEnd}
+            ${wfFilterClause};
         `;
 
         const prevStatsQuery = `
             SELECT COUNT(*) as total, 
                    SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error
             FROM execution_entity e
-            ${targetWorkflow ? 'JOIN workflow_entity w ON e."workflowId" = w.id' : ''}
-            WHERE datetime(e."startedAt") > datetime('now', '${prevLookbackStart}')
-              AND datetime(e."startedAt") <= datetime('now', '${prevLookbackEnd}')
-            ${targetWorkflow ? 'AND w.name = ?' : ''};
+            ${wfJoinClause}
+            WHERE datetime(e."startedAt") >= ${prevStart} AND datetime(e."startedAt") < ${prevEnd}
+            ${wfFilterClause};
         `;
-
-        let queryParams = [];
-        if (targetWorkflow) queryParams.push(targetWorkflow);
-
-        // Generate hourly buckets for the last 24h/48h/7d in JS
-        const now = new Date();
-        const buckets = [];
-        let bucketCount = 24;
-        let stepMs = 3600000; // 1 hour
-        if (timeRange === '48h') bucketCount = 48;
-        if (timeRange === '7d') { bucketCount = 7; stepMs = 86400000; }
-
-        for (let i = 0; i < bucketCount; i++) {
-            const t = new Date(now.getTime() - (i * stepMs));
-            if (timeRange === '7d') t.setHours(0, 0, 0, 0);
-            else t.setMinutes(0, 0, 0);
-            buckets.push(t.toISOString());
-        }
-        buckets.reverse();
 
         const topWorkflowsQuery = `
             SELECT w.name AS workflow_name, COUNT(e.id) AS execution_count,
-                   ROUND((COUNT(e.id) * 100.0 / (SELECT COUNT(*) FROM execution_entity WHERE datetime("startedAt") > datetime('now', '${lookback}'))), 2) AS percentage
+                   ROUND((COUNT(e.id) * 100.0 / NULLIF((SELECT COUNT(*) FROM execution_entity e ${wfJoinClause} WHERE datetime(e."startedAt") >= ${currentStart} AND datetime(e."startedAt") <= ${currentEnd} ${wfFilterClause}), 0)), 2) AS percentage
             FROM execution_entity e
             JOIN workflow_entity w ON e."workflowId" = w.id
-            WHERE datetime(e."startedAt") > datetime('now', '${lookback}')
+            WHERE datetime(e."startedAt") >= ${currentStart} AND datetime(e."startedAt") <= ${currentEnd}
+            ${wfFilterClause}
             GROUP BY w.id, w.name
             ORDER BY execution_count DESC;
         `;
 
+        const hourlyQuery = `
+            SELECT status, "startedAt" 
+            FROM execution_entity e
+            ${wfJoinClause}
+            WHERE datetime(e."startedAt") >= ${currentStart} AND datetime(e."startedAt") <= ${currentEnd}
+            ${wfFilterClause}
+        `;
+
         const [stats, prevStats, execs, topWorkflows] = await Promise.all([
-            localDb.query(statsQuery, queryParams),
-            localDb.query(prevStatsQuery, queryParams),
-            localDb.query(`
-                SELECT status, "startedAt" 
-                FROM execution_entity 
-                WHERE datetime("startedAt") > datetime('now', ?)
-                ${targetWorkflow ? 'AND "workflowId" = (SELECT id FROM workflow_entity WHERE name = ?)' : ''}
-            `, [lookback, ...(targetWorkflow ? [targetWorkflow] : [])]), 
-            localDb.query(topWorkflowsQuery)
+            localDb.query(statsQuery, params),
+            localDb.query(prevStatsQuery, params),
+            localDb.query(hourlyQuery, params), 
+            localDb.query(topWorkflowsQuery, params)
         ]);
+
+        // Generate buckets for the chart
+        const buckets = [];
+        let stepMs = bucketUnit === 'day' ? 86400000 : 3600000;
+        
+        let startPoint = new Date(new Date(startIso).getTime());
+        let endPointFull = new Date(new Date(endIso).getTime());
+        if (bucketUnit === 'day') startPoint.setHours(0,0,0,0);
+        else startPoint.setMinutes(0,0,0);
+
+        let temp = new Date(startPoint);
+        while (temp <= endPointFull) {
+            buckets.push(temp.toISOString());
+            temp = new Date(temp.getTime() + stepMs);
+        }
 
         // Map executions into buckets
         const hourly = buckets.map(bTime => {
@@ -125,33 +147,31 @@ exports.getMetrics = async (req, res) => {
         if (prevError > 0) trend_error_pct = ((currentError - prevError) / prevError) * 100;
         if (prevError === 0 && currentError > 0) trend_error_pct = 100;
 
-        // Active-Bucket Extrapolation -> Normalize the final interval drop-off on line charts
+        // Smart Extrapolation: prevent 'cliff' on incomplete final intervals
         if (hourly.length > 2) {
             const lastRow = hourly[hourly.length - 1];
             const p1 = hourly[hourly.length - 2].success_count || 0;
             const p2 = hourly[hourly.length - 3].success_count || 0;
             const avgPrevious = (p1 + p2) / 2.0;
-
             const now = new Date();
-            
-            if (timeRange === '7d') {
-                const hoursPassed = now.getHours() + (now.getMinutes() / 60.0);
-                if (hoursPassed > 0 && hoursPassed < 23) {
-                    const factor = hoursPassed > 4 ? (24.0 / hoursPassed) : null;
-                    if (!factor) lastRow.success_count = Math.round(avgPrevious);
-                    else {
-                        const projected = lastRow.success_count * factor;
-                        lastRow.success_count = Math.round((projected + avgPrevious) / 2);
+
+            // Check if the range ends within the current interval
+            const rangeEndMs = isCustom ? new Date(endDate).getTime() : now.getTime();
+            const lastBucketStartMs = new Date(lastRow.time_val).getTime();
+            const isLatestBucket = (rangeEndMs > lastBucketStartMs && rangeEndMs <= lastBucketStartMs + stepMs);
+
+            if (isLatestBucket) {
+                if (bucketUnit === 'day') {
+                    const hoursPassed = (rangeEndMs - lastBucketStartMs) / 3600000;
+                    if (hoursPassed > 1 && hoursPassed < 23) {
+                        const factor = 24.0 / hoursPassed;
+                        lastRow.success_count = Math.round(((lastRow.success_count * factor) + avgPrevious) / 2);
                     }
-                }
-            } else {
-                const minsPassed = now.getMinutes();
-                if (minsPassed > 0 && minsPassed < 58) {
-                    const factor = minsPassed > 5 ? (60.0 / minsPassed) : null;
-                    if (!factor) lastRow.success_count = Math.round(avgPrevious);
-                    else {
-                        const projected = lastRow.success_count * factor;
-                        lastRow.success_count = Math.round((projected + avgPrevious) / 2);
+                } else {
+                    const minsPassed = ((rangeEndMs - lastBucketStartMs) / 60000) % 60;
+                    if (minsPassed > 5 && minsPassed < 58) {
+                        const factor = 60.0 / minsPassed;
+                        lastRow.success_count = Math.round(((lastRow.success_count * factor) + avgPrevious) / 2);
                     }
                 }
             }
@@ -164,9 +184,10 @@ exports.getMetrics = async (req, res) => {
         });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Database error' });
+        res.status(500).json({ error: 'Database errorfetching metrics' });
     }
 };
+
 
 exports.getExecutions = async (req, res) => {
     const limit = Math.max(1, Math.min(100, parseInt(req.query.limit) || 20));

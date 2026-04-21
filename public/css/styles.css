@@ -139,3 +139,22 @@ select option {
     min-width: 0;
     border-radius: 4px 4px 0 0;
 }
+
+/* ── Active Filter Styling ── */
+.filter-active-glow {
+    background: linear-gradient(135deg, rgba(39, 130, 80, 0.4) 0%, rgba(23, 23, 23, 0.4) 100%) !important;
+    border-color: rgba(74, 222, 128, 0.5) !important;
+    box-shadow: 0 0 20px -5px rgba(39, 130, 80, 0.3);
+    transition: all 0.3s ease;
+}
+
+@keyframes filter-pulse {
+    0% { border-color: rgba(74, 222, 128, 0.1); box-shadow: 0 0 5px rgba(39, 130, 80, 0.1); }
+    50% { border-color: rgba(74, 222, 128, 0.5); box-shadow: 0 0 20px rgba(39, 130, 80, 0.3); }
+    100% { border-color: rgba(74, 222, 128, 0.1); box-shadow: 0 0 5px rgba(39, 130, 80, 0.1); }
+}
+
+.filter-loading-pulse {
+    animation: filter-pulse 1.5s ease-in-out infinite !important;
+    pointer-events: none;
+}

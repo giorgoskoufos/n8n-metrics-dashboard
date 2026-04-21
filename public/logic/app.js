@@ -24,11 +24,11 @@ window.userSettings = { timezone: 'auto' };
  */
 window.formatTime = (utcStr, options = {}) => {
     if (!utcStr) return 'N/A';
-    
+
     // Ensure string is treated as UTC if it doesn't have an offset
     const dateStr = (utcStr.endsWith('Z') || utcStr.includes('+')) ? utcStr : (utcStr + 'Z');
     const date = new Date(dateStr);
-    
+
     // Default to 24-hour time to avoid 12/24 confusion
     const baseOptions = {
         timeZone: window.userSettings.timezone === 'auto' ? undefined : window.userSettings.timezone,
@@ -36,7 +36,7 @@ window.formatTime = (utcStr, options = {}) => {
         hourCycle: 'h23',
         ...options
     };
-    
+
     return date.toLocaleString([], baseOptions);
 };
 
@@ -48,14 +48,14 @@ async function initSettings() {
             window.userSettings = await res.json();
             console.log("[SETTINGS] Timezone initialized:", window.userSettings.timezone || 'auto');
         }
-    } catch(e) {}
+    } catch (e) { }
 }
 
 // --- SECTION 1.5: HEALTH CHECK HELPER ---
 async function checkN8nHealth() {
     const healthContainer = document.getElementById('n8nHealthIndicator');
     if (!healthContainer) return;
-    
+
     try {
         const res = await fetchWithAuth('/api/n8n-health');
         if (res.ok) {
@@ -69,7 +69,7 @@ async function checkN8nHealth() {
             }
         }
         throw new Error();
-    } catch(e) {
+    } catch (e) {
         healthContainer.innerHTML = `<span class="flex h-2 w-2 relative mr-2">
   <span class="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
 </span> <span class="text-[10px] text-red-500 font-bold tracking-widest uppercase">n8n Offline</span>`;
@@ -80,144 +80,232 @@ document.addEventListener('DOMContentLoaded', checkN8nHealth);
 
 // --- SECTION 2: CHART INITIALIZATION ---
 function initCharts() {
-    const ctxLine = document.getElementById('lineChart').getContext('2d');
-    lineChart = new Chart(ctxLine, {
-        type: 'line',
-        data: {
-            labels: [],
-            datasets: [
-                { label: 'Success', data: [], borderColor: '#278250', backgroundColor: 'rgba(39, 130, 80, 0.1)', tension: 0.4, borderWidth: 2, fill: false, pointRadius: 0, pointHitRadius: 10, pointHoverRadius: 5 },
-                { label: 'Errors', data: [], borderColor: '#f16a75', backgroundColor: 'rgba(241, 106, 117, 0.1)', tension: 0.4, borderWidth: 2, fill: false, pointRadius: 0, pointHitRadius: 10, pointHoverRadius: 5 }
-            ]
-        },
-        options: { 
-            responsive: true, 
-            maintainAspectRatio: false,
-            plugins: { 
-                legend: { display: false },
-                tooltip: {
-                    callbacks: {
-                        title: (tooltipItems) => {
-                            if (!tooltipItems.length) return '';
-                            return window.formatTime(tooltipItems[0].label, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const elLine = document.getElementById('lineChart');
+    if (elLine) {
+        const ctxLine = elLine.getContext('2d');
+        lineChart = new Chart(ctxLine, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    { label: 'Success', data: [], borderColor: '#278250', backgroundColor: 'rgba(39, 130, 80, 0.1)', tension: 0.4, borderWidth: 2, fill: false, pointRadius: 0, pointHitRadius: 10, pointHoverRadius: 5 },
+                    { label: 'Errors', data: [], borderColor: '#f16a75', backgroundColor: 'rgba(241, 106, 117, 0.1)', tension: 0.4, borderWidth: 2, fill: false, pointRadius: 0, pointHitRadius: 10, pointHoverRadius: 5 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title: (tooltipItems) => {
+                                if (!tooltipItems.length) return '';
+                                return window.formatTime(tooltipItems[0].label, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                            }
                         }
                     }
-                }
-            }, 
-            scales: { 
-                y: { grid: { color: '#333' }, min: 0 }, 
-                x: { 
-                    grid: { color: '#333', display: false }, 
-                    ticks: { 
-                        maxTicksLimit: 8, 
-                        maxRotation: 0,
-                        callback: function(val, index) {
-                            const label = this.getLabelForValue(val);
-                            if (!label) return '';
-                            return window.formatTime(label, { hour: '2-digit', minute: '2-digit' });
-                        }
-                    } 
-                } 
-            } 
-        }
-    });
-
-    const ctxDoughnut = document.getElementById('doughnutChart').getContext('2d');
-    doughnutChart = new Chart(ctxDoughnut, {
-        type: 'doughnut',
-        data: { labels: [], datasets: [{ data: [], borderWidth: 0, cutout: '75%', hoverOffset: 15 }] },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
-    });
-
-    const ctxConcurrency = document.getElementById('concurrencyChart').getContext('2d');
-    concurrencyChart = new Chart(ctxConcurrency, {
-        type: 'line',
-        data: {
-            labels: [],
-            datasets: [{
-                label: 'Active Executions',
-                data: [],
-                borderColor: '#6366f1',
-                backgroundColor: (context) => {
-                    const chart = context.chart;
-                    const {ctx, chartArea} = chart;
-                    if (!chartArea) return null;
-                    const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
-                    gradient.addColorStop(0, 'rgba(99, 102, 241, 0)');
-                    gradient.addColorStop(1, 'rgba(99, 102, 241, 0.3)');
-                    return gradient;
                 },
-                tension: 0.4,
-                fill: true,
-                pointRadius: 0,
-                borderWidth: 2
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
-            plugins: { 
-                legend: { display: false },
-                tooltip: {
-                    callbacks: {
-                        title: (tooltipItems) => {
-                            if (!tooltipItems.length) return '';
-                            const startStr = tooltipItems[0].label;
-                            const intervalMins = parseInt(document.getElementById('concurrencyInterval')?.value) || 5;
-                            const startDate = new Date(startStr);
-                            const endDate = new Date(startDate.getTime() + intervalMins * 60000);
-                            
-                            const format = (d) => window.formatTime(d.toISOString(), { hour: '2-digit', minute: '2-digit' });
-                            return `${format(startDate)} - ${format(endDate)}`;
-                        },
-                        label: (context) => {
-                            return ` ${context.parsed.y} Executions`;
+                scales: {
+                    y: { grid: { color: '#333' }, min: 0 },
+                    x: {
+                        grid: { color: '#333', display: false },
+                        ticks: {
+                            maxTicksLimit: 8,
+                            maxRotation: 0,
+                            callback: function (val, index) {
+                                const label = this.getLabelForValue(val);
+                                if (!label) return '';
+                                return window.formatTime(label, { hour: '2-digit', minute: '2-digit' });
+                            }
                         }
                     }
-                }
-            },
-            onClick: async (e, activeEls) => {
-                if (activeEls.length > 0) {
-                    const dataIndex = activeEls[0].index;
-                    const timestamp = concurrencyChart.data.labels[dataIndex];
-                    const interval = document.getElementById('concurrencyInterval')?.value || 5;
-                    await fetchConcurrencyDetails(timestamp, interval);
-                }
-            },
-            scales: {
-                y: { grid: { color: '#222' }, min: 0, ticks: { stepSize: 1, color: '#555' } },
-                x: { 
-                    grid: { display: false }, 
-                    ticks: { 
-                        color: '#555',
-                        maxTicksLimit: 12,
-                        callback: function(val, index) {
-                            const label = this.getLabelForValue(val);
-                            return window.formatTime(label, { hour: '2-digit', minute: '2-digit' });
-                        }
-                    } 
                 }
             }
-        }
-    });
+        });
+    }
+
+    const elDoughnut = document.getElementById('doughnutChart');
+    if (elDoughnut) {
+        const ctxDoughnut = elDoughnut.getContext('2d');
+        doughnutChart = new Chart(ctxDoughnut, {
+            type: 'doughnut',
+            data: { labels: [], datasets: [{ data: [], borderWidth: 0, cutout: '75%', hoverOffset: 15 }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+        });
+    }
+
+    const elConcurrency = document.getElementById('concurrencyChart');
+    if (elConcurrency) {
+        const ctxConcurrency = elConcurrency.getContext('2d');
+        concurrencyChart = new Chart(ctxConcurrency, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Active Executions',
+                    data: [],
+                    borderColor: '#6366f1',
+                    backgroundColor: (context) => {
+                        const chart = context.chart;
+                        const { ctx, chartArea } = chart;
+                        if (!chartArea) return null;
+                        const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+                        gradient.addColorStop(0, 'rgba(99, 102, 241, 0)');
+                        gradient.addColorStop(1, 'rgba(99, 102, 241, 0.3)');
+                        return gradient;
+                    },
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 0,
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title: (tooltipItems) => {
+                                if (!tooltipItems.length) return '';
+                                const startStr = tooltipItems[0].label;
+                                const intervalMins = parseInt(document.getElementById('concurrencyInterval')?.value) || 5;
+                                const startDate = new Date(startStr);
+                                const endDate = new Date(startDate.getTime() + intervalMins * 60000);
+
+                                const format = (d) => window.formatTime(d.toISOString(), { hour: '2-digit', minute: '2-digit' });
+                                return `${format(startDate)} - ${format(endDate)}`;
+                            },
+                            label: (context) => {
+                                return ` ${context.parsed.y} Executions`;
+                            }
+                        }
+                    }
+                },
+                onClick: async (e, activeEls) => {
+                    if (activeEls.length > 0) {
+                        const dataIndex = activeEls[0].index;
+                        const timestamp = concurrencyChart.data.labels[dataIndex];
+                        const interval = document.getElementById('concurrencyInterval')?.value || 5;
+                        await fetchConcurrencyDetails(timestamp, interval);
+                    }
+                },
+                scales: {
+                    y: { grid: { color: '#222' }, min: 0, ticks: { stepSize: 1, color: '#555' } },
+                    x: {
+                        grid: { display: false },
+                        ticks: {
+                            color: '#555',
+                            maxTicksLimit: 12,
+                            callback: function (val, index) {
+                                const label = this.getLabelForValue(val);
+                                return window.formatTime(label, { hour: '2-digit', minute: '2-digit' });
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+
+/**
+ * Main dashboard initialization - only runs if we are on the index/dashboard page.
+ */
+function initDashboard() {
+    return !!document.getElementById('lineChart');
 }
 
 // --- SECTION 3: DATA FETCHING ---
+window.applyPreset = (hours) => {
+    const todayLocal = new Date();
+    const startLocal = new Date(todayLocal.getTime() - (hours * 3600000));
+
+    const toLocalISO = (date) => {
+        const offset = date.getTimezoneOffset() * 60000;
+        return new Date(date.getTime() - offset).toISOString().split('T')[0];
+    };
+
+    const startVal = toLocalISO(startLocal);
+    const endVal = toLocalISO(todayLocal);
+
+    const elStart = document.getElementById('rangeStart');
+    const elEnd = document.getElementById('rangeEnd');
+
+    if (elStart && elEnd) {
+        elStart.value = startVal;
+        elEnd.value = endVal;
+        window.lastPresetHours = hours;
+        refreshData();
+    }
+};
+
+window.setConcPreset = (hours) => {
+    const trafficDate = document.getElementById('trafficDate');
+    if (trafficDate) trafficDate.value = ''; // Clear date for rolling window
+
+    // UI Feedback
+    const btn = document.getElementById('btnConc24h');
+    if (btn) {
+        btn.classList.add('bg-indigo-600/20', 'text-indigo-400');
+        btn.classList.remove('bg-gray-800/40', 'text-gray-400');
+    }
+
+    fetchConcurrency(null); // Fetch rolling 24h
+};
+
 async function fetchMetricsData() {
     const wfFilter = document.getElementById('workflowFilter')?.value || '';
-    const timeFilter = document.getElementById('timeRangeFilter')?.value || '24h';
+    const rangeStart = document.getElementById('rangeStart')?.value || '';
+    const rangeEnd = document.getElementById('rangeEnd')?.value || '';
+
+    // Selective Pulse: Only blink the one we are actually loading
+    let targetId = 'customRangeContainer';
+    if (window.lastPresetHours === 24) targetId = 'btn24h';
+    else if (window.lastPresetHours === 48) targetId = 'btn48h';
+    else if (window.lastPresetHours === 168) targetId = 'btn7d';
     
+    document.getElementById(targetId)?.classList.add('filter-loading-pulse');
+
     const params = new URLSearchParams();
     if (wfFilter) params.append('workflow', wfFilter);
-    if (timeFilter) params.append('timeRange', timeFilter);
-    
+
+    if (window.lastPresetHours) {
+        // STRICT PRECISION: Use exact rolling window
+        const now = new Date();
+        const start = new Date(now.getTime() - (window.lastPresetHours * 3600000));
+        params.append('startDate', start.toISOString());
+        params.append('endDate', now.toISOString());
+    } else if (rangeStart && rangeEnd) {
+        // Day Precision fallback
+        params.append('startDate', rangeStart);
+        params.append('endDate', rangeEnd);
+    } else {
+        // Fallback: Default to 7 days
+        const today = new Date();
+        const start = new Date(today.getTime() - (168 * 3600000));
+        const toISO = (d) => new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+        params.append('startDate', toISO(start));
+        params.append('endDate', toISO(today));
+    }
+
     try {
-        const response = await fetchWithAuth(`/api/metrics?${params.toString()}`);
-        return response.ok ? await response.json() : null;
+        const response = await fetchWithAuth(`/api/analytics/metrics?${params.toString()}`);
+        const data = await response.json();
+
+        updateKpiCards(data.summary);
+        updateLineChart(data.hourlyData);
+        updateDoughnutChart(data.topWorkflows);
+        lastTopWorkflows = data.topWorkflows;
+        populateDropdown(data.topWorkflows);
     } catch (err) {
         console.error("Error fetching metrics:", err);
-        return null;
+    } finally {
+        // Note: updateActiveFilterStyles() inside updateLineChart removes pulse and restores solid color
+        updateActiveFilterStyles();
     }
 }
 
@@ -228,20 +316,20 @@ async function fetchExecutions(offset, limit) {
         params.append('limit', limit);
 
         const workflow = document.getElementById('execWorkflowFilter')?.value;
-        const status   = document.getElementById('execStatusFilter')?.value;
-        const execId   = document.getElementById('execIdFilter')?.value?.trim();
-        const startDt  = parseExecDate(document.getElementById('execStartFilter')?.value);
-        const endDt    = parseExecDate(document.getElementById('execEndFilter')?.value);
-        const minDur   = document.getElementById('execMinDurFilter')?.value;
+        const status = document.getElementById('execStatusFilter')?.value;
+        const execId = document.getElementById('execIdFilter')?.value?.trim();
+        const startDt = parseExecDate(document.getElementById('execStartFilter')?.value);
+        const endDt = parseExecDate(document.getElementById('execEndFilter')?.value);
+        const minDur = document.getElementById('execMinDurFilter')?.value;
 
         if (workflow) params.append('workflow', workflow);
-        if (status)   params.append('status',   status);
+        if (status) params.append('status', status);
         if (execId && !isNaN(parseInt(execId))) params.append('execId', parseInt(execId));
-        if (startDt)  params.append('from',     startDt.toISOString());
-        if (endDt)    params.append('toStop',    endDt.toISOString());
+        if (startDt) params.append('from', startDt.toISOString());
+        if (endDt) params.append('toStop', endDt.toISOString());
         if (minDur && parseFloat(minDur) > 0) params.append('minDuration', parseFloat(minDur));
 
-        const response = await fetchWithAuth(`/api/executions?${params.toString()}`);
+        const response = await fetchWithAuth(`/api/analytics/executions?${params.toString()}`);
         return response.ok ? await response.json() : [];
     } catch (err) {
         console.error("Error fetching executions:", err);
@@ -266,7 +354,7 @@ function updateKpiCards(summary) {
     if (elFailed) elFailed.innerText = errors.toLocaleString();
     if (elRate) elRate.innerText = errorRate + '%';
     if (elTime) elTime.innerText = avgTime + 's';
-    ['kpiSk1','kpiSk2','kpiSk3'].forEach(id => document.getElementById(id)?.classList.add('done'));
+    ['kpiSk1', 'kpiSk2', 'kpiSk3'].forEach(id => document.getElementById(id)?.classList.add('done'));
 
     // Update Trend Badges
     const trendTotalEl = document.getElementById('trendTotal');
@@ -313,16 +401,53 @@ function updateLineChart(chartData) {
     const errorData = [];
 
     chartData.forEach(row => {
-        labels.push(row.time_val); // Push raw ISO string, Chart ticks will format it
+        labels.push(row.time_val);
         successData.push(parseInt(row.success_count) || 0);
         errorData.push(parseInt(row.error_count) || 0);
     });
-    
+
+    // Dynamic X-Axis Formatting based on range duration
+    const first = new Date(labels[0]);
+    const last = new Date(labels[labels.length - 1]);
+    const durationDays = (last - first) / 86400000;
+
+    lineChart.options.scales.x.ticks.maxTicksLimit = 8;
+    lineChart.options.scales.x.ticks.callback = function (value, index, values) {
+        const date = new Date(this.getLabelForValue(value));
+        if (durationDays > 2.1) {
+            return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        }
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    };
+
     lineChart.data.labels = labels;
-    lineChart.data.datasets[0].data = successData; 
-    lineChart.data.datasets[1].data = errorData;   
+    lineChart.data.datasets[0].data = successData;
+    lineChart.data.datasets[1].data = errorData;
     lineChart.update();
+
+    updateActiveFilterStyles();
     document.getElementById('lineChartSk')?.classList.add('done');
+}
+
+function updateActiveFilterStyles() {
+    const btn24h = document.getElementById('btn24h');
+    const btn48h = document.getElementById('btn48h');
+    const btn7d = document.getElementById('btn7d');
+    const customContainer = document.getElementById('customRangeContainer');
+
+    // Remove all states
+    [btn24h, btn48h, btn7d, customContainer].forEach(el => {
+        el?.classList.remove('filter-active-glow', 'filter-loading-pulse');
+    });
+
+    // Apply solid glow to active
+    if (window.lastPresetHours === 24) btn24h?.classList.add('filter-active-glow');
+    else if (window.lastPresetHours === 48) btn48h?.classList.add('filter-active-glow');
+    else if (window.lastPresetHours === 168) btn7d?.classList.add('filter-active-glow');
+    else {
+        // If no preset, custom container is active
+        customContainer?.classList.add('filter-active-glow');
+    }
 }
 
 function updateDoughnutChart(workflows) {
@@ -356,7 +481,7 @@ function updateDoughnutChart(workflows) {
 
     const colors = ['#ff6f5c', '#00c07f', '#ff9f43', '#00b8d9', '#6554c0', '#f16a75'];
     const backgroundColors = labels.map((label, index) => label === 'Rest Workflows' ? '#374151' : colors[index % colors.length]);
-    
+
     doughnutChart.data.datasets[0].backgroundColor = backgroundColors;
     doughnutChart.update();
     document.getElementById('doughnutSk')?.classList.add('done');
@@ -364,13 +489,13 @@ function updateDoughnutChart(workflows) {
 
 function updateConcurrencyChart(data) {
     if (!data || !concurrencyChart) return;
-    
+
     // 1. Cache the raw data for re-filtering
     lastRawConcurrency = data;
 
     // 2. Get current interval preference
     const intervalMins = parseInt(document.getElementById('concurrencyInterval')?.value) || 5;
-    
+
     const now = new Date();
     const intervalMs = intervalMins * 60000;
 
@@ -391,12 +516,12 @@ function updateConcurrencyChart(data) {
         for (let i = 0; i < data.length; i += pointsPerBlock) {
             const block = data.slice(i, i + pointsPerBlock);
             if (block.length === 0) continue;
-            
+
             const bucketStart = new Date(block[0].timestamp);
             // Hide if the entire block hasn't passed yet
             if (bucketStart.getTime() + intervalMs <= now.getTime()) {
                 const sum = block.reduce((acc, b) => acc + (parseInt(b.active_count) || 0), 0);
-                processedLabels.push(block[0].timestamp); 
+                processedLabels.push(block[0].timestamp);
                 processedData.push(sum);
             }
         }
@@ -412,28 +537,28 @@ async function fetchConcurrencyDetails(timestamp, windowSize = 5) {
     const modal = document.getElementById('detailsModal');
     const tbody = document.getElementById('detailsTableBody');
     const subtitle = document.getElementById('detailsModalSubtitle');
-    
+
     if (!modal) return;
-    
+
     tbody.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-gray-500 italic">Fetching executions starting at ${timestamp}...</td></tr>`;
-    
+
     // Display range in subtitle
     const startDate = new Date(timestamp);
     const endDate = new Date(startDate.getTime() + windowSize * 60000);
     const startStr = window.formatTime(startDate.toISOString(), { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
     const endStr = window.formatTime(endDate.toISOString(), { hour: '2-digit', minute: '2-digit', hour12: false });
-    
+
     subtitle.innerText = `${startStr} - ${endStr} (${windowSize}min)`;
-    
+
     document.body.style.overflow = 'hidden'; // Lock background
     modal.classList.remove('hidden');
-    modal.style.display = 'flex'; 
+    modal.style.display = 'flex';
     setTimeout(() => document.getElementById('detailsModalContainer').classList.remove('scale-95'), 10);
 
     try {
         const response = await fetchWithAuth(`/api/analytics/concurrency/details?time=${encodeURIComponent(timestamp)}&window=${windowSize}`);
         const data = await response.json();
-        
+
         if (data.length === 0) {
             tbody.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-gray-500 italic">No executions found precisely at this 5m interval.</td></tr>`;
             return;
@@ -443,11 +568,11 @@ async function fetchConcurrencyDetails(timestamp, windowSize = 5) {
             const isError = exec.status !== 'success';
             const statusColor = isError ? 'text-red-400' : (exec.status === 'running' ? 'text-blue-400 animate-pulse' : 'text-green-400');
             const statusIcon = isError ? 'fa-xmark' : (exec.status === 'running' ? 'fa-spinner fa-spin' : 'fa-check');
-            
+
             const timeString = window.formatTime(exec.startedAt, { hour: '2-digit', minute: '2-digit' });
-            
+
             const durationSec = parseFloat(exec.current_duration);
-            const durationStr = durationSec < 60 ? `${Math.round(durationSec)}s` : `${Math.round(durationSec/60)}m`;
+            const durationStr = durationSec < 60 ? `${Math.round(durationSec)}s` : `${Math.round(durationSec / 60)}m`;
 
             let actionBtn = '';
             if (isError) {
@@ -477,7 +602,7 @@ async function fetchConcurrencyDetails(timestamp, windowSize = 5) {
             </tr>
             `;
         }).join('');
-        
+
     } catch (err) {
         tbody.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-red-500 italic">Error fetching concurrency details.</td></tr>`;
     }
@@ -521,8 +646,8 @@ function populateExecWorkflowDropdown(workflows) {
 }
 
 function clearExecFilters() {
-    ['execWorkflowFilter','execStatusFilter','execIdFilter',
-     'execStartFilter','execEndFilter','execMinDurFilter'
+    ['execWorkflowFilter', 'execStatusFilter', 'execIdFilter',
+        'execStartFilter', 'execEndFilter', 'execMinDurFilter'
     ].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
@@ -622,7 +747,7 @@ function initExecutionsHeader() {
     populateExecWorkflowDropdown(lastTopWorkflows);
     // Auto-fill end = start + 10 min when start is typed and end is still empty
     const startEl = document.getElementById('execStartFilter');
-    const endEl   = document.getElementById('execEndFilter');
+    const endEl = document.getElementById('execEndFilter');
     if (startEl && endEl) {
         startEl.addEventListener('change', () => {
             const d = parseExecDate(startEl.value);
@@ -661,7 +786,7 @@ async function loadMoreExecutions(reset = false) {
     const executions = await fetchExecutions(currentOffset, LIMIT);
     const tbody = document.getElementById('table-body') || document.getElementById('executionsTableBody');
     const trigger = document.getElementById('scroll-trigger') || document.getElementById('scrollTrigger');
-    
+
     if (!tbody) {
         isFetchingExecutions = false;
         return;
@@ -670,12 +795,12 @@ async function loadMoreExecutions(reset = false) {
     if (executions.length > 0) {
         executions.forEach(exec => {
             const startStr = window.formatTime(exec.startedAt, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
-            const endStr   = window.formatTime(exec.stoppedAt, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+            const endStr = window.formatTime(exec.stoppedAt, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
             const duration = exec.duration < 1 ? Math.round(exec.duration * 1000) + 'ms' : parseFloat(exec.duration).toFixed(3) + 's';
-            
+
             const isError = exec.status !== 'success';
 
-            const statusHtml = !isError 
+            const statusHtml = !isError
                 ? `<span class="flex items-center gap-2 text-[#278250]"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg> Success</span>`
                 : `<span class="flex items-center gap-2 text-[#f16a75] font-bold"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path></svg> Error</span>`;
 
@@ -692,17 +817,17 @@ async function loadMoreExecutions(reset = false) {
                 </tr>
             `;
         });
-        currentOffset += LIMIT; 
+        currentOffset += LIMIT;
     } else {
         if (trigger) trigger.innerHTML = "No more executions.";
     }
-    
+
     isFetchingExecutions = false;
 }
 
 function hasActiveFilters() {
-    return ['execWorkflowFilter','execStatusFilter','execIdFilter',
-            'execStartFilter','execEndFilter','execMinDurFilter']
+    return ['execWorkflowFilter', 'execStatusFilter', 'execIdFilter',
+        'execStartFilter', 'execEndFilter', 'execMinDurFilter']
         .some(id => {
             const el = document.getElementById(id);
             return el && el.value && el.value.trim() !== '';
@@ -744,7 +869,7 @@ async function refreshData() {
 
 async function fetchConcurrency(dateVal) {
     let url = '/api/analytics/concurrency';
-    
+
     if (dateVal) {
         // Construct Local 00:00:00 to 23:59:59 times
         const start = new Date(dateVal + 'T00:00:00');
@@ -760,9 +885,8 @@ async function fetchConcurrency(dateVal) {
 }
 
 async function initDateFilter() {
-    const dateInput = document.getElementById('trafficDate');
-    const btn24h = document.getElementById('btn24h');
-    if (!dateInput) return;
+    const rangeStart = document.getElementById('rangeStart');
+    const rangeEnd = document.getElementById('rangeEnd');
 
     try {
         const res = await fetchWithAuth('/api/analytics/first-execution-date');
@@ -771,71 +895,73 @@ async function initDateFilter() {
             const data = await res.json();
             if (data.firstDate) {
                 firstDateIso = data.firstDate.substring(0, 10);
-                dateInput.min = firstDateIso;
+                if (rangeStart) rangeStart.min = firstDateIso;
+                if (rangeEnd) rangeEnd.min = firstDateIso;
             }
         }
-        
+
         // Max is always today
         const todayLocal = new Date();
         const offset = todayLocal.getTimezoneOffset() * 60000;
         const localISOTime = (new Date(todayLocal.getTime() - offset)).toISOString().split('T')[0];
-        dateInput.max = localISOTime;
+        if (rangeStart) rangeStart.max = localISOTime;
+        if (rangeEnd) rangeEnd.max = localISOTime;
 
-        // Listeners
-        dateInput.addEventListener('change', (e) => {
-            const val = e.target.value;
-            if (val) {
-                // Mobile WebKit strict fallback validation
-                if ((firstDateIso && val < firstDateIso) || val > localISOTime) {
-                    e.target.value = ''; // Revert invalid choice
-                    e.target.blur(); // Force close the native mobile UI wheel
-                    setTimeout(() => {
-                        alert(`Please select a date between ${firstDateIso} and ${localISOTime}`);
-                    }, 400); // Wait for the wheel drop-down to fully exit
-                    return;
-                }
-                btn24h.classList.remove('bg-indigo-600/20', 'text-indigo-400');
-                btn24h.classList.add('bg-black/30', 'text-gray-500');
-                fetchConcurrency(val);
-            }
+        // Custom Range Listeners -> Clear highlights on manual change
+        [rangeStart, rangeEnd].forEach(el => {
+            el?.addEventListener('change', () => {
+                window.lastPresetHours = null;
+                refreshData();
+            });
         });
 
-        if (btn24h) {
-            btn24h.addEventListener('click', () => {
-                dateInput.value = ''; // Clear picker
-                btn24h.classList.add('bg-indigo-600/20', 'text-indigo-400');
-                btn24h.classList.remove('bg-black/30', 'text-gray-500');
-                fetchConcurrency(null);
+        // Concurrency chart listeners
+        const trafficDate = document.getElementById('trafficDate');
+        const intervalSelect = document.getElementById('concurrencyInterval');
+        if (trafficDate) {
+            trafficDate.min = firstDateIso;
+            trafficDate.max = localISOTime;
+            trafficDate.addEventListener('change', (e) => {
+                // Clear the sub-preset highlight
+                const btn = document.getElementById('btnConc24h');
+                if (btn) {
+                    btn.classList.replace('bg-indigo-600/20', 'bg-gray-800/40');
+                    btn.classList.replace('text-indigo-400', 'text-gray-400');
+                }
+                fetchConcurrency(e.target.value);
             });
         }
-    } catch (err) {
-        console.error('Failed to init date filter limits', err);
+        if (intervalSelect) {
+            intervalSelect.addEventListener('change', () => {
+                // Interval just re-filters the cached lastRawConcurrency
+                updateConcurrencyChart(lastRawConcurrency);
+            });
+        }
+
+        // Set Default 7d Macro
+        applyPreset(168);
+
+    } catch (e) {
+        console.error("Date Filter Init failed:", e);
     }
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
     await initSettings();
+    
+    // Only run dashboard-specific logic if the core elements exist
+    if (!initDashboard()) {
+        console.log("[INIT] Non-dashboard page detected. Skipping chart initialization.");
+        return;
+    }
+
     initCharts();
     setupInfiniteScroll();
     await initDateFilter();
-    await refreshData();     // await so lastTopWorkflows is populated before header renders
-    initExecutionsHeader();  // build filter row on first load
-    loadMoreExecutions(true);
+    initExecutionsHeader(); // Initialize filters on boot
 
-    const timeFilter = document.getElementById('timeRangeFilter');
-    if (timeFilter) timeFilter.addEventListener('change', refreshData);
-    
     const wfFilter = document.getElementById('workflowFilter');
     if (wfFilter) wfFilter.addEventListener('change', refreshData);
-
-    const concInterval = document.getElementById('concurrencyInterval');
-    if (concInterval) {
-        concInterval.addEventListener('change', () => {
-            if (lastRawConcurrency.length > 0) {
-                updateConcurrencyChart(lastRawConcurrency);
-            }
-        });
-    }
 });
 
 // --- SECTION 7: TAB NAVIGATION & DYNAMIC TABLES ---
@@ -846,7 +972,7 @@ async function switchTab(tabName) {
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.remove('active');
     });
-    
+
     const activeBtn = document.querySelector(`[onclick="switchTab('${tabName}')"]`);
     if (activeBtn) {
         activeBtn.classList.add('active');
@@ -876,7 +1002,7 @@ async function switchTab(tabName) {
             </tr>
         `;
         if (scrollTrigger) scrollTrigger.style.display = 'none';
-        
+
         const res = await fetchWithAuth('/api/analytics/slowest');
         const data = await res.json();
         if (tbody) {
@@ -902,8 +1028,8 @@ async function switchTab(tabName) {
                 <th class="p-4 font-medium">Error Rate</th>
             </tr>
         `;
-        if (scrollTrigger) scrollTrigger.style.display = 'none'; 
-        
+        if (scrollTrigger) scrollTrigger.style.display = 'none';
+
         const res = await fetchWithAuth('/api/analytics/errors');
         const data = await res.json();
         if (tbody) {
