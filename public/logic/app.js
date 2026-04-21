@@ -637,94 +637,10 @@ function initExecutionsHeader() {
     });
 }
 
-// --- SECTION 4.5: ERROR MODAL LOGIC ---
-async function showError(execId, hasSnapshot = false) {
-    const modal = document.getElementById('errorModal');
-    const msgBox = document.getElementById('modalErrorMessage');
-    const idBox = document.getElementById('modalExecId');
-    const nodeBox = document.getElementById('modalNodeName');
-    const n8nLink = document.getElementById('n8nLink');
-    const deepDiveBtn = document.getElementById('deepDiveBtn');
 
-    if (!modal) return;
-
-    closeDetailsModal(); // Close Execution Snapshot if it's open
-
-    idBox.innerText = execId;
-    nodeBox.innerText = '--';
-    msgBox.innerText = 'Loading snapshot...';
-    
-    deepDiveBtn.onclick = () => fetchDetailedError(execId);
-    
-    modal.classList.remove('hidden');
-    modal.style.display = 'flex'; 
-    document.body.style.overflow = 'hidden'; // Lock background
-    setTimeout(() => document.getElementById('modalContainer').classList.remove('scale-95'), 10);
-
-    try {
-        const response = await fetchWithAuth(`/api/execution-error/${execId}`);
-        const data = await response.json();
-        
-        nodeBox.innerText = data.nodeName || 'Unknown Node';
-        msgBox.innerText = data.message || 'Snapshot unavailable. Try fetching the raw trace.';
-
-        if (n8nLink && data.workflowId && data.n8nBaseUrl) {
-            n8nLink.href = `${data.n8nBaseUrl}/workflow/${data.workflowId}/executions/${execId}`;
-        }
-    } catch (err) {
-        msgBox.innerText = 'No instant snapshot found. Use "Fetch Raw Trace" for a deep inspection.';
-    }
-}
-
-async function fetchDetailedError(execId) {
-    const msgBox = document.getElementById('modalErrorMessage');
-    msgBox.innerText = 'Fetching raw JSON dump from Postgres... (This may take a moment)';
-    
-    try {
-        const response = await fetchWithAuth(`/api/execution-error/${execId}?full=true`);
-        const data = await response.json();
-        msgBox.innerText = data.fullError || data.message || 'Full trace unavailable.';
-    } catch (e) {
-        msgBox.innerText = 'Error fetching raw trace from production database.';
-    }
-}
-
-function closeErrorModal() {
-    const modal = document.getElementById('errorModal');
-    if (modal) {
-        modal.classList.add('hidden');
-        modal.style.display = 'none';
-        document.body.style.overflow = 'auto'; // Unlock
-        // Reset copy icon if modal closes
-        const icon = document.getElementById('copyIcon');
-        if (icon) icon.className = 'fa-regular fa-copy';
-    }
-}
-
-async function copyErrorMessage() {
-    const msg = document.getElementById('modalErrorMessage')?.innerText;
-    const icon = document.getElementById('copyIcon');
-    if (!msg || msg === 'Loading...' || msg === 'Analyzing trace...') return;
-    
-    try {
-        await navigator.clipboard.writeText(msg);
-        if (icon) {
-            icon.className = 'fa-solid fa-check text-green-400';
-            setTimeout(() => {
-                icon.className = 'fa-regular fa-copy';
-            }, 2000);
-        }
-    } catch (err) {
-        console.error('Failed to copy text: ', err);
-    }
-}
 
 window.addEventListener('click', (event) => {
-    const modal = document.getElementById('errorModal');
     const detailsModal = document.getElementById('detailsModal');
-    if (modal && event.target === modal) {
-        closeErrorModal();
-    }
     if (detailsModal && event.target === detailsModal) {
         closeDetailsModal();
     }

@@ -12,6 +12,11 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="../js/tailwind.config.js"></script>
     <script>__applyErrorsTheme();</script>
+    <link rel="icon" type="image/svg+xml" href="../assets/n8n_db.svg">
+    <link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="../assets/favicon-16x16.png">
+    <link rel="manifest" href="../assets/site.webmanifest">
     <link rel="stylesheet" href="../css/errors.css">
 </head>
 
@@ -51,9 +56,14 @@
                     </button>
                 </div>
             </div>
-            <div class="text-right">
-                <h1 class="text-xl md:text-2xl font-bold text-white">Error Intelligence</h1>
-                <p class="text-xs md:text-sm text-gray-400">Surgical Analytics & Hotspots</p>
+            <div class="flex items-center gap-4">
+                <div class="hidden md:flex items-center justify-center w-10 h-10 rounded-xl bg-white/5 border border-white/10 shadow-inner">
+                    <img src="../assets/n8n_db.svg" alt="n8n logo" class="w-7 h-7 object-contain">
+                </div>
+                <div class="text-right">
+                    <h1 class="text-xl md:text-2xl font-bold text-white">Error Intelligence</h1>
+                    <p class="text-xs md:text-sm text-gray-400">Surgical Analytics & Hotspots</p>
+                </div>
             </div>
         </header>
 
@@ -168,71 +178,10 @@
 
     </div>
 
-    <!-- Error Modal Sync (from index.html) -->
-    <div id="errorModal"
-        class="fixed inset-0 bg-black/95 backdrop-blur-md z-[9999] hidden items-center justify-center p-4 overflow-y-auto">
-        <div class="bg-n8n-card border border-gray-700 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl my-auto"
-            id="modalContainer">
-            <div class="p-6 border-b border-gray-800 flex justify-between items-center bg-black/20">
-                <div class="flex items-center gap-3">
-                    <div
-                        class="w-10 h-10 bg-red-900/40 rounded-lg flex items-center justify-center border border-red-500/30">
-                        <i class="fa-solid fa-triangle-exclamation text-red-400"></i>
-                    </div>
-                    <div>
-                        <h2 class="text-lg font-bold">Surgical Error Snapshot</h2>
-                        <p class="text-[10px] text-gray-500 uppercase tracking-widest font-semibold"
-                            id="modalTimestamp">--</p>
-                    </div>
-                </div>
-                <button onclick="closeErrorModal()" class="text-gray-500 hover:text-white transition-colors p-2">
-                    <i class="fa-solid fa-xmark text-xl"></i>
-                </button>
-            </div>
-            <div class="p-8">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-                    <div>
-                        <label class="block text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-1">Failing
-                            Node</label>
-                        <div id="modalNodeName"
-                            class="text-white font-semibold text-sm bg-black/30 p-3 rounded border border-gray-800">--
-                        </div>
-                    </div>
-                    <div>
-                        <label
-                            class="block text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-1">Execution
-                            ID</label>
-                        <div id="modalExecId"
-                            class="text-gray-400 font-mono text-sm bg-black/30 p-3 rounded border border-gray-800">--
-                        </div>
-                    </div>
-                </div>
-                <label class="block text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-1">Error
-                    Description</label>
-                <div class="relative group">
-                    <div id="modalErrorMessage"
-                        class="bg-red-900/10 p-4 pr-10 rounded-lg border border-red-500/20 text-red-400 font-mono text-xs leading-relaxed mb-8 max-h-[300px] overflow-y-auto whitespace-pre-wrap">
-                        Loading...</div>
-                    <button onclick="copyErrorMessage()" 
-                        class="absolute top-2 right-3 sm:top-3 sm:right-8 p-2 text-white/40 hover:text-white transition-all bg-black/40 hover:bg-black/60 rounded border border-white/10 z-20"
-                        title="Copy Error Content">
-                        <i id="copyIcon" class="fa-regular fa-copy text-[11px] sm:text-[10px]"></i>
-                    </button>
-                </div>
 
-                <div class="flex justify-between items-center">
-                    <p class="text-[11px] text-gray-500 italic"><i
-                            class="fa-solid fa-lightbulb text-indigo-400 mr-1"></i> Use raw trace for deep node state
-                        inspection</p>
-                    <button onclick="fetchDetailedError(currentExecId)"
-                        class="px-5 py-2.5 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-xs font-bold transition-all border border-gray-700">Fetch
-                        Raw Trace</button>
-                </div>
-            </div>
-        </div>
-    </div>
 
     <script src="../logic/global_functions.js"></script>
+    <script src="../logic/error-modal.js"></script>
     <script src="../logic/errors.js"></script>
     <script>
         // Copy-Paste Burger Logic for speed

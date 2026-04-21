@@ -31,14 +31,20 @@ async function loadErrorIntelligence() {
         cardWorkflows.innerText = (data.summary.affected_workflows || 0).toLocaleString();
 
         // Populate Workflow Drilldown Selector
-        if (data.workflows) {
-            drilldownSelector.innerHTML = '<option value="">Select a workflow to analyze...</option>';
+        if (data.workflows && data.workflows.length > 0) {
+            drilldownSelector.innerHTML = ''; 
             data.workflows.forEach(wf => {
                 const opt = document.createElement('option');
                 opt.value = wf.id;
                 opt.innerText = `${wf.name} (${wf.error_count} errors)`;
                 drilldownSelector.appendChild(opt);
             });
+            // Auto-load first workflow
+            const firstWfId = data.workflows[0].id;
+            drilldownSelector.value = firstWfId;
+            fetchWorkflowDrilldown(firstWfId);
+        } else {
+            drilldownSelector.innerHTML = '<option value="">No workflows with errors found</option>';
         }
 
         // Render Global Node Hotspots
@@ -68,7 +74,7 @@ async function loadErrorIntelligence() {
                         </td>
                         <td class="p-4 text-red-400/80 leading-relaxed max-w-md">${escapeHtml(err.error_message)}</td>
                         <td class="p-4 text-right">
-                            <button onclick="showErrorDetail('${err.id}')" class="text-indigo-400 hover:text-indigo-300 transition-colors p-2 text-lg">
+                            <button onclick="showErrorSnapshot('${err.id}')" class="text-indigo-400 hover:text-indigo-300 transition-colors p-2 text-lg">
                                 <i class="fa-solid fa-expand"></i>
                             </button>
                         </td>
@@ -207,74 +213,7 @@ function downloadDrilldown(type) {
     }
 }
 
-async function showErrorDetail(execId) {
-    currentExecId = execId;
-    const modal = document.getElementById('errorModal');
-    const nodeBox = document.getElementById('modalNodeName');
-    const idBox = document.getElementById('modalExecId');
-    const msgBox = document.getElementById('modalErrorMessage');
-    const timeBox = document.getElementById('modalTimestamp');
 
-    // Clear and Show
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-    msgBox.innerText = 'Analyzing trace...';
-
-    try {
-        const response = await fetchWithAuth(`/api/execution-error/${execId}`);
-        const data = await response.json();
-
-        nodeBox.innerText = data.nodeName || 'Unknown Node';
-        idBox.innerText = execId;
-        msgBox.innerText = data.message || 'Snapshot unavailable. Try fetching the raw trace.';
-        timeBox.innerText = `ID: ${execId}`;
-
-    } catch (err) {
-        msgBox.innerText = 'No instant snapshot found. Use "Fetch Raw Trace" for a deep inspection.';
-    }
-}
-
-async function fetchDetailedError(execId) {
-    const msgBox = document.getElementById('modalErrorMessage');
-    msgBox.innerText = 'Fetching raw JSON dump from Postgres... (This may take a moment)';
-
-    try {
-        const response = await fetchWithAuth(`/api/execution-error/${execId}?full=true`);
-        const data = await response.json();
-        msgBox.innerText = data.fullError || data.message || 'Full trace unavailable.';
-    } catch (e) {
-        msgBox.innerText = 'Error fetching raw trace from production database.';
-    }
-}
-
-function closeErrorModal() {
-    const modal = document.getElementById('errorModal');
-    if (modal) {
-        modal.classList.add('hidden');
-        modal.classList.remove('flex');
-        // Reset copy icon if modal closes
-        const icon = document.getElementById('copyIcon');
-        if (icon) icon.className = 'fa-regular fa-copy';
-    }
-}
-
-async function copyErrorMessage() {
-    const msg = document.getElementById('modalErrorMessage')?.innerText;
-    const icon = document.getElementById('copyIcon');
-    if (!msg || msg === 'Loading...' || msg === 'Analyzing trace...') return;
-
-    try {
-        await navigator.clipboard.writeText(msg);
-        if (icon) {
-            icon.className = 'fa-solid fa-check text-green-400';
-            setTimeout(() => {
-                icon.className = 'fa-regular fa-copy';
-            }, 2000);
-        }
-    } catch (err) {
-        console.error('Failed to copy text: ', err);
-    }
-}
 
 
 function formatTimeNice(isoStr) {

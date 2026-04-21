@@ -18,10 +18,11 @@
     <script src="/js/tailwind.config.js"></script>
 
     <link rel="stylesheet" href="/css/styles.css">
+    <link rel="icon" type="image/svg+xml" href="assets/n8n_db.svg">
     <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
-    <link rel="icon" type="image/png" sizes="32x32" href="assets//favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="assets//favicon-16x16.png">
-    <link rel="manifest" href="assets//site.webmanifest">
+    <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16x16.png">
+    <link rel="manifest" href="assets/site.webmanifest">
 </head>
 
 <body class="p-4 md:p-8">
@@ -70,10 +71,15 @@
                     </div>
                 </div>
             </div>
-            <div class="text-right">
-                <h1 class="text-xl md:text-2xl font-bold text-white">n8n Dashboard</h1>
-                <p class="text-xs md:text-sm text-gray-400">Real-time workflow analytics</p>
-            </div>
+            <div class="flex items-center gap-4">
+        <div class="hidden md:flex items-center justify-center w-10 h-10 rounded-xl bg-white/5 border border-white/10 shadow-inner">
+            <img src="assets/n8n_db.svg" alt="n8n logo" class="w-7 h-7 object-contain">
+        </div>
+        <div class="text-right">
+            <h1 class="text-xl md:text-2xl font-bold text-white">n8n Dashboard</h1>
+            <p class="text-xs md:text-sm text-gray-400">Real-time workflow analytics</p>
+        </div>
+    </div>
         </header>
 
         <div class="flex flex-col sm:flex-row justify-end items-center mb-8 gap-4 w-full">
@@ -262,75 +268,7 @@
         </div>
     </div>
 
-    <div id="errorModal"
-        class="fixed inset-0 bg-black/90 backdrop-blur-md z-[9999] hidden items-center justify-center p-4">
-        <div class="bg-n8n-card border border-gray-700 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl scale-95 transition-transform duration-300"
-            id="modalContainer">
-            <div class="p-6 border-b border-gray-800 flex justify-between items-center bg-black/20">
-                <div class="flex items-center gap-3">
-                    <div
-                        class="w-10 h-10 bg-red-900/40 rounded-lg flex items-center justify-center border border-red-500/30">
-                        <i class="fa-solid fa-triangle-exclamation text-red-400"></i>
-                    </div>
-                    <div>
-                        <h3 class="text-lg font-bold text-white">Surgical Error Snapshot</h3>
-                        <p class="text-[10px] text-gray-500 uppercase tracking-widest">Post-Mortem Analysis</p>
-                    </div>
-                </div>
-                <button onclick="closeErrorModal()" class="text-gray-500 hover:text-white transition-colors">
-                    <i class="fa-solid fa-xmark text-xl"></i>
-                </button>
-            </div>
-            <div class="p-8">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-                    <div>
-                        <label class="block text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-1">Failing
-                            Node</label>
-                        <div id="modalNodeName"
-                            class="text-white font-semibold text-sm bg-black/30 p-3 rounded border border-gray-800">--
-                        </div>
-                    </div>
-                    <div>
-                        <label
-                            class="block text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-1">Execution
-                            ID</label>
-                        <div id="modalExecId"
-                            class="text-gray-400 font-mono text-sm bg-black/30 p-3 rounded border border-gray-800">--
-                        </div>
-                    </div>
-                </div>
 
-                <label class="block text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-1">Error
-                    Description</label>
-                <div class="relative group">
-                    <div id="modalErrorMessage"
-                        class="bg-red-900/10 p-4 pr-10 rounded-lg border border-red-500/20 text-red-400 font-mono text-xs leading-relaxed mb-8 max-h-48 overflow-y-auto whitespace-pre-wrap">
-                        Loading...</div>
-                    <button onclick="copyErrorMessage()" 
-                        class="absolute top-2 right-3 sm:top-3 sm:right-8 p-2 text-white/40 hover:text-white transition-all bg-black/40 hover:bg-black/60 rounded border border-white/10 z-20"
-                        title="Copy Error Content">
-                        <i id="copyIcon" class="fa-regular fa-copy text-[11px] sm:text-[10px]"></i>
-                    </button>
-                </div>
-
-                <div class="flex flex-col sm:flex-row justify-between items-center gap-4">
-                    <p class="text-[11px] text-gray-500 italic"><i
-                            class="fa-solid fa-lightbulb text-indigo-400 mr-1"></i> Snapshot captured via n8n Error
-                        Workflow</p>
-                    <div class="flex gap-3">
-                        <button id="deepDiveBtn"
-                            class="bg-gray-800 hover:bg-gray-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center gap-2">
-                            <i class="fa-solid fa-magnifying-glass-plus text-xs"></i> Fetch Raw Trace
-                        </button>
-                        <a id="n8nLink" href="#" target="_blank"
-                            class="bg-[#ff6f5c] hover:bg-opacity-90 text-white px-5 py-2.5 rounded-lg text-sm font-bold transition-all flex items-center gap-2">
-                            Open n8n <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
-                        </a>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
 
     <div id="detailsModal"
         class="fixed inset-0 bg-black/90 backdrop-blur-md z-[9999] hidden items-center justify-center p-4">
@@ -338,10 +276,9 @@
             id="detailsModalContainer">
             <div class="p-6 border-b border-gray-800 flex justify-between items-center bg-black/20 shrink-0">
                 <div class="flex items-center gap-3">
-                    <div
-                        class="w-10 h-10 bg-indigo-900/40 rounded-lg flex items-center justify-center border border-indigo-500/30">
-                        <i class="fa-solid fa-layer-group text-indigo-400"></i>
-                    </div>
+                    <div class="w-8 h-8 rounded-lg bg-n8n-primary/20 flex items-center justify-center border border-n8n-primary/30">
+                            <img src="assets/n8n_db.svg" alt="n8n logo" class="w-5 h-5 object-contain">
+                        </div>
                     <div>
                         <h3 class="text-lg font-bold text-white">Execution Snapshot</h3>
                         <p id="detailsModalSubtitle" class="text-[10px] text-gray-500 uppercase tracking-widest">
@@ -394,8 +331,8 @@
         <!-- Chat Header (Static) -->
         <div class="bg-n8n-card border-b border-gray-800 p-4 flex justify-between items-center shrink-0 z-10">
             <div class="flex items-center gap-3">
-                <div class="bg-indigo-600/20 w-8 h-8 flex items-center justify-center rounded-lg">
-                    <i class="fa-solid fa-robot text-indigo-400 text-sm"></i>
+                <div class="bg-n8n-primary/20 w-8 h-8 flex items-center justify-center rounded-lg border border-n8n-primary/30 shadow-inner shrink-0">
+                    <img src="assets/n8n_db.svg" alt="n8n logo" class="w-5 h-5 object-contain">
                 </div>
                 <div>
                     <h4 class="text-sm font-bold">n8n AI Assistant</h4>
@@ -442,6 +379,7 @@
     </div>
 
     <script src="logic/global_functions.js"></script>
+    <script src="logic/error-modal.js"></script>
     <script src="logic/app.js"></script>
     <script src="logic/chat-widget.js"></script>
     <script>
