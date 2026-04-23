@@ -5,6 +5,26 @@
 
 A high-performance, real-time analytics dashboard designed for **self-hosted n8n** instances.
 
+## 📸 Screenshots
+
+| Main Dashboard | Error Intelligence |
+|:---:|:---:|
+| ![Main Dashboard](docs/images/main.png) | ![Error Intelligence](docs/images/error.png) |
+
+<br>
+
+| ROI Analytics | Mobile Responsiveness |
+|:---:|:---:|
+| <img src="docs/images/roi.png" width="800"> | <img src="docs/images/mobile_main.jpg" height="400"> |
+
+### 🧩 Detailed Widgets
+
+| Execution Volume | Error Hotspots |
+|:---:|:---:|
+| ![Execution Volume](docs/images/main_exec_volume_daily.png) | ![Error Hotspots](docs/images/main_error_hotspots.png) |
+| **Execution Logs** | **Slowest Workflows** |
+| ![Execution Logs](docs/images/main_executions_rows.png) | ![Slowest Workflows](docs/images/main_slowsest_workflows.png) |
+
 ### **🎯 Who is this for?**
 This tool is for the **Self-Hosted Community**. If you manage your own n8n instance and want professional analytics without the need for an enterprise license or a full cloud migration, this dashboard is designed for you.
 
@@ -179,8 +199,17 @@ OPENAI_API_KEY=sk-proj-your-key-here
 SYNC_INTERVAL_MINUTES=5
 ```
 
-### Installation
+### Standard Installation (Node.js)
 1. Clone the repository.
 2. Install dependencies: `npm install`
 3. Start the server: `npm start`
 4. Access the dashboard at `http://localhost:3000`.
+
+### Docker Installation
+A lightweight `Dockerfile` is included if you prefer running it in an isolated container alongside your n8n stack.
+
+1. Clone the repository.
+2. Ensure your `.env` file is fully configured.
+3. Build the image: `docker build -t n8n-dashboard .`
+4. Run the container: `docker run -d -p 3000:3000 --env-file .env n8n-dashboard`
+5. Access the dashboard at `http://localhost:3000`.
