@@ -37,7 +37,7 @@ window.formatTime = (utcStr, options = {}) => {
         ...options
     };
 
-    return date.toLocaleString([], baseOptions);
+    return date.toLocaleString('en-US', baseOptions);
 };
 
 // Fetch settings once at boot
