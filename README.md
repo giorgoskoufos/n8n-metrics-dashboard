@@ -213,3 +213,13 @@ A lightweight `Dockerfile` is included if you prefer running it in an isolated c
 3. Build the image: `docker build -t n8n-dashboard .`
 4. Run the container: `docker run -d -p 3000:3000 --env-file .env n8n-dashboard`
 5. Access the dashboard at `http://localhost:3000`.
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+**Legal Disclaimer:** This project is an independent, community-made tool and is **not** affiliated with, endorsed by, or sponsored by n8n.io.
