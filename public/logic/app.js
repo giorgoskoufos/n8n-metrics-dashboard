@@ -630,6 +630,8 @@ function populateDropdown(workflows) {
             select.appendChild(option);
         });
     }
+    // Sync with executions filter dropdown if it exists
+    populateExecWorkflowDropdown(workflows);
 }
 
 function populateExecWorkflowDropdown(workflows) {
@@ -759,6 +761,9 @@ function initExecutionsHeader() {
     // Enter key on any filter input/select fires Apply
     thead.querySelectorAll('input, select').forEach(el => {
         el.addEventListener('keydown', e => { if (e.key === 'Enter') applyExecFilters(); });
+        if (el.tagName === 'SELECT') {
+            el.addEventListener('change', applyExecFilters);
+        }
     });
 }
 
