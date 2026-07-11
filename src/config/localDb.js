@@ -101,9 +101,15 @@ function initDb() {
                 input_data TEXT,
                 metadata TEXT,
                 execution_source TEXT,
+                error_category TEXT DEFAULT 'unknown',
                 timestamp DATETIME
             )
         `);
+
+        // Migration: add error_category if it doesn't exist
+        localDb.run(`ALTER TABLE execution_error_analytics ADD COLUMN error_category TEXT DEFAULT 'unknown'`, (err) => {
+            // Silence the duplicate column error on startup
+        });
     });
 }
 

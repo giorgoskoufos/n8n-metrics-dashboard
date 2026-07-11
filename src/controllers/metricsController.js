@@ -641,76 +641,150 @@ exports.getConcurrencyDetails = async (req, res) => {
 
 exports.getErrorIntelligence = async (req, res) => {
     try {
-        // 1. Stats Summary
+        const startDate = req.query.startDate;
+        const endDate = req.query.endDate;
+
+        let startIso, endIso, prevStartIso, prevEndIso;
+
+        if (startDate && endDate) {
+            startIso = new Date(startDate).toISOString();
+            endIso = new Date(endDate).toISOString();
+        } else {
+            const now = new Date();
+            startIso = new Date(now.getTime() - 7 * 24 * 3600000).toISOString();
+            endIso = now.toISOString();
+        }
+
+        const durationMs = new Date(endIso).getTime() - new Date(startIso).getTime();
+        prevEndIso = startIso;
+        prevStartIso = new Date(new Date(startIso).getTime() - durationMs).toISOString();
+
+        // 1. Summary Stats
         const summaryQuery = `
             SELECT 
                 COUNT(*) as total_errors,
                 COUNT(DISTINCT workflow_id) as affected_workflows,
-                COUNT(DISTINCT node_name) as unique_failing_nodes
+                COUNT(DISTINCT node_name) as unique_failing_nodes,
+                SUM(CASE WHEN error_category IN ('rate_limit','network','upstream') THEN 1 ELSE 0 END) as transient_count,
+                SUM(CASE WHEN error_category IN ('auth','config','data','logic') THEN 1 ELSE 0 END) as structural_count
             FROM execution_error_analytics
-            WHERE datetime(timestamp) > datetime('now', '-7 days')
+            WHERE datetime(timestamp) >= datetime('${startIso}') AND datetime(timestamp) <= datetime('${endIso}')
         `;
 
-        // 2. Workflow Hotspots (Calculated Error Rate)
-        const workflowQuery = `
+        const prevSummaryQuery = `
+            SELECT COUNT(*) as total_errors
+            FROM execution_error_analytics
+            WHERE datetime(timestamp) >= datetime('${prevStartIso}') AND datetime(timestamp) < datetime('${prevEndIso}')
+        `;
+
+        // Total executions for error rate calculation
+        const execCountQuery = `
+            SELECT COUNT(*) as total
+            FROM execution_entity
+            WHERE datetime("startedAt") >= datetime('${startIso}') AND datetime("startedAt") <= datetime('${endIso}')
+        `;
+
+        // 2. Category Breakdown
+        const categoryQuery = `
+            SELECT error_category, COUNT(*) as count
+            FROM execution_error_analytics
+            WHERE datetime(timestamp) >= datetime('${startIso}') AND datetime(timestamp) <= datetime('${endIso}')
+            GROUP BY error_category
+            ORDER BY count DESC
+        `;
+
+        // 3. Trend Timeline (daily buckets)
+        const trendQuery = `
+            SELECT date(timestamp) as day, error_category, COUNT(*) as count
+            FROM execution_error_analytics
+            WHERE datetime(timestamp) >= datetime('${startIso}') AND datetime(timestamp) <= datetime('${endIso}')
+            GROUP BY date(timestamp), error_category
+            ORDER BY day ASC
+        `;
+
+        // 4. Workflow Health Scores
+        const healthQuery = `
             SELECT 
-                w.id,
-                w.name, 
-                COUNT(a.id) as error_count,
-                (SELECT COUNT(*) FROM execution_entity WHERE "workflowId" = w.id AND datetime("startedAt") > datetime('now', '-7 days')) as total_runs
-            FROM execution_error_analytics a
-            JOIN workflow_entity w ON a.workflow_id = w.id
-            WHERE datetime(a.timestamp) > datetime('now', '-7 days')
+                w.id, w.name,
+                COUNT(CASE WHEN e.status = 'error' THEN 1 END) as error_count,
+                COUNT(e.id) as total_runs,
+                ROUND((1.0 - (CAST(COUNT(CASE WHEN e.status = 'error' THEN 1 END) AS REAL) / NULLIF(COUNT(e.id), 0))) * 100, 1) as health_score
+            FROM workflow_entity w
+            JOIN execution_entity e ON w.id = e."workflowId"
+            WHERE datetime(e."startedAt") >= datetime('${startIso}') AND datetime(e."startedAt") <= datetime('${endIso}')
             GROUP BY w.id, w.name
-            ORDER BY error_count DESC
-            LIMIT 10
+            HAVING COUNT(CASE WHEN e.status = 'error' THEN 1 END) > 0
+            ORDER BY health_score ASC
+            LIMIT 15
         `;
 
-        // 3. Node Hotspots (Which specific nodes are 'burners')
-        const nodeQuery = `
-            SELECT node_name, node_type, COUNT(*) as fail_count
-            FROM execution_error_analytics
-            WHERE datetime(timestamp) > datetime('now', '-7 days')
-            GROUP BY node_name, node_type
-            ORDER BY fail_count DESC
-            LIMIT 10
-        `;
-
-        // 4. Source Branch Analysis (Brittle paths)
-        const sourceQuery = `
-            SELECT source_node, source_output_index, COUNT(*) as crash_count
-            FROM execution_error_analytics
-            WHERE datetime(timestamp) > datetime('now', '-7 days') AND source_node != ''
-            GROUP BY source_node, source_output_index
-            ORDER BY crash_count DESC
-            LIMIT 10
-        `;
-
-        // 5. Recent Detailed Feed
-        const feedQuery = `
-            SELECT a.*, w.name as workflow_name
+        // 5. Deduplicated Error Groups
+        const groupsQuery = `
+            SELECT 
+                a.error_category,
+                a.node_name,
+                a.node_type,
+                SUBSTR(a.error_message, 1, 200) as error_summary,
+                COUNT(*) as count,
+                COUNT(DISTINCT a.workflow_id) as affected_workflows,
+                MIN(a.timestamp) as first_seen,
+                MAX(a.timestamp) as last_seen,
+                GROUP_CONCAT(DISTINCT w.name) as workflow_names
             FROM execution_error_analytics a
             JOIN workflow_entity w ON a.workflow_id = w.id
-            ORDER BY datetime(a.timestamp) DESC
-            LIMIT 30
+            WHERE datetime(a.timestamp) >= datetime('${startIso}') AND datetime(a.timestamp) <= datetime('${endIso}')
+            GROUP BY a.error_category, a.node_name, SUBSTR(a.error_message, 1, 200)
+            ORDER BY count DESC
+            LIMIT 50
         `;
 
-        const [summary, workflows, nodes, sources, feed] = await Promise.all([
+        const [summary, prevSummary, execCount, categories, trend, health, groups] = await Promise.all([
             localDb.query(summaryQuery),
-            localDb.query(workflowQuery),
-            localDb.query(nodeQuery),
-            localDb.query(sourceQuery),
-            localDb.query(feedQuery)
+            localDb.query(prevSummaryQuery),
+            localDb.query(execCountQuery),
+            localDb.query(categoryQuery),
+            localDb.query(trendQuery),
+            localDb.query(healthQuery),
+            localDb.query(groupsQuery)
         ]);
+
+        const totalErrors = summary.rows[0].total_errors || 0;
+        const prevTotalErrors = prevSummary.rows[0].total_errors || 0;
+        const totalExecs = execCount.rows[0].total || 0;
+        let trendPct = 0;
+        if (prevTotalErrors > 0) trendPct = ((totalErrors - prevTotalErrors) / prevTotalErrors) * 100;
+        else if (totalErrors > 0) trendPct = 100;
+
+        // Pivot trend data into {day, auth, rate_limit, network, ...} format
+        const trendMap = {};
+        for (const row of trend.rows) {
+            if (!trendMap[row.day]) trendMap[row.day] = { day: row.day };
+            trendMap[row.day][row.error_category] = row.count;
+        }
+        const trendData = Object.values(trendMap);
+
+        // Mark error groups as active/recurring/resolved
+        const now = new Date();
+        const oneDayAgo = new Date(now.getTime() - 24 * 3600000).toISOString();
+        const enrichedGroups = groups.rows.map(g => ({
+            ...g,
+            workflow_names: g.workflow_names ? g.workflow_names.split(',').slice(0, 3) : [],
+            status: g.last_seen >= oneDayAgo ? 'active' : 'recurring'
+        }));
 
         const n8nBaseUrl = process.env.N8N_EDITOR_BASE_URL || '';
 
         res.json({
-            summary: summary.rows[0],
-            workflows: workflows.rows,
-            nodes: nodes.rows,
-            sources: sources.rows,
-            feed: feed.rows,
+            summary: {
+                ...summary.rows[0],
+                total_executions: totalExecs,
+                error_rate: totalExecs > 0 ? ((totalErrors / totalExecs) * 100).toFixed(1) : 0,
+                trend_pct: Math.round(trendPct * 10) / 10
+            },
+            categories: categories.rows,
+            trend: trendData,
+            workflows: health.rows,
+            errorGroups: enrichedGroups,
             n8nBaseUrl
         });
 
@@ -777,5 +851,33 @@ exports.getWorkflowErrorDrilldown = async (req, res) => {
     } catch (err) {
         console.error('[BACKEND] Workflow Drilldown Failed:', err);
         res.status(500).json({ error: 'Failed to fetch workflow drilldown data' });
+    }
+};
+
+exports.getErrorGroupExecutions = async (req, res) => {
+    try {
+        const { category, nodeName, summary, startDate, endDate } = req.body;
+        
+        if (!category || !nodeName || !summary || !startDate || !endDate) {
+            return res.status(400).json({ error: 'Missing required parameters' });
+        }
+
+        const query = `
+            SELECT a.id as exec_id, a.timestamp, w.name as workflow_name
+            FROM execution_error_analytics a
+            JOIN workflow_entity w ON a.workflow_id = w.id
+            WHERE datetime(a.timestamp) >= datetime(?) AND datetime(a.timestamp) <= datetime(?)
+              AND a.error_category = ?
+              AND a.node_name = ?
+              AND SUBSTR(a.error_message, 1, 200) = ?
+            ORDER BY a.timestamp DESC
+            LIMIT 30
+        `;
+        
+        const result = await localDb.query(query, [startDate, endDate, category, nodeName, summary]);
+        res.json({ executions: result.rows });
+    } catch (err) {
+        console.error('[BACKEND] Error fetching group executions:', err);
+        res.status(500).json({ error: 'Failed to fetch group executions' });
     }
 };

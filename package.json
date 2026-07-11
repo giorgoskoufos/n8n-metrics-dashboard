@@ -7,7 +7,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "build:css": "npx @tailwindcss/cli -i ./public/css/input.css -o ./public/css/styles.css --minify",
+    "watch:css": "npx @tailwindcss/cli -i ./public/css/input.css -o ./public/css/styles.css --watch"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
@@ -21,5 +23,9 @@
     "openai": "^6.32.0",
     "pg": "^8.20.0",
     "sqlite3": "^6.0.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.2",
+    "tailwindcss": "^4.3.2"
   }
 }

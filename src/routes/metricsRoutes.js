@@ -21,6 +21,7 @@ router.get('/analytics/first-execution-date', authenticateToken, metricsControll
 router.get('/analytics/concurrency', authenticateToken, metricsController.getConcurrencyData);
 router.get('/analytics/concurrency/details', authenticateToken, metricsController.getConcurrencyDetails);
 router.get('/analytics/error-intelligence', authenticateToken, metricsController.getErrorIntelligence);
+router.post('/analytics/error-group-executions', authenticateToken, metricsController.getErrorGroupExecutions);
 router.get('/analytics/workflow-drilldown/:id', authenticateToken, metricsController.getWorkflowErrorDrilldown);
 
 module.exports = router;

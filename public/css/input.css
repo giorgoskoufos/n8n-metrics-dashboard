@@ -1,0 +1,191 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Open Sans", sans-serif;
+
+  --color-n8n-dark: var(--n8n-dark);
+  --color-n8n-card: var(--n8n-card);
+  --color-n8n-primary: var(--n8n-primary);
+  --color-n8n-success: var(--n8n-success);
+  --color-n8n-danger: var(--n8n-danger);
+  --color-n8n-text: var(--n8n-text);
+  --color-n8n-hover: var(--n8n-hover);
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    --n8n-dark: #171717;
+    --n8n-card: #222222;
+    --n8n-primary: #ff6f5c;
+    --n8n-success: #278250;
+    --n8n-danger: #f16a75;
+    --n8n-text: #eeeeee;
+    --n8n-hover: #333333;
+  }
+
+  .theme-errors {
+    --n8n-dark: #121212;
+    --n8n-card: #1a1a1a;
+    --n8n-success: #4ade80;
+    --n8n-danger: #f87171;
+  }
+
+  body {
+    background-color: var(--n8n-dark);
+    color: var(--n8n-text);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Select styling fixes for visibility */
+  select {
+    color-scheme: dark;
+  }
+  
+  select option {
+    background-color: var(--n8n-card);
+    color: var(--n8n-text);
+  }
+}
+
+/* Base custom classes ported from styles.css */
+@layer components {
+  .status-success {
+    background-color: rgba(39, 130, 80, 0.2);
+    color: #4ade80;
+  }
+
+  .status-error {
+    background-color: rgba(241, 106, 117, 0.2);
+    color: #f87171;
+  }
+
+  .tab-btn.active {
+    border-bottom: 2px solid var(--n8n-primary);
+    color: var(--n8n-primary);
+  }
+
+  /* Markdown Chat Styling */
+  .prose-chat table {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border-collapse: collapse;
+    margin: 8px 0;
+    font-size: 11px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+  }
+
+  .prose-chat th {
+    background: rgba(99, 102, 241, 0.1);
+    padding: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    text-align: left;
+    color: #818cf8;
+    white-space: nowrap;
+  }
+
+  .prose-chat td {
+    padding: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    color: #d1d5db;
+    white-space: nowrap;
+  }
+
+  .prose-chat strong {
+    color: #818cf8;
+    font-weight: 600;
+  }
+
+  .prose-chat ul {
+    list-style-type: disc;
+    margin-left: 1.5rem;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .prose-chat p {
+    margin-bottom: 0.75rem;
+  }
+
+  .prose-chat p:last-child {
+    margin-bottom: 0;
+  }
+  
+  /* Skeleton Overlays */
+  .sk {
+    background: linear-gradient(90deg, #242424 25%, #2e2e2e 50%, #242424 75%);
+    background-size: 200% auto;
+    animation: sk-shimmer 1.6s linear infinite;
+    border-radius: 4px;
+  }
+
+  .sk-overlay {
+    position: absolute;
+    inset: 0;
+    background: #222222;
+    z-index: 10;
+    border-radius: inherit;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 12px 0;
+    justify-content: flex-end;
+    transition: opacity 0.5s ease;
+  }
+
+  .sk-overlay.done {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .sk-overlay.sk-kpi {
+    justify-content: flex-start;
+    padding: 20px;
+    gap: 12px;
+  }
+
+  .sk-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 5px;
+    flex: 1;
+  }
+
+  .sk-bars > .sk-bar {
+    flex: 1;
+    min-width: 0;
+    border-radius: 4px 4px 0 0;
+  }
+}
+
+@layer utilities {
+  .custom-scrollbar::-webkit-scrollbar { width: 8px; }
+  .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+  .custom-scrollbar::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #555; }
+  
+  .filter-active-glow {
+    background: linear-gradient(135deg, rgba(39, 130, 80, 0.4) 0%, rgba(23, 23, 23, 0.4) 100%) !important;
+    border-color: rgba(74, 222, 128, 0.5) !important;
+    box-shadow: 0 0 20px -5px rgba(39, 130, 80, 0.3);
+    transition: all 0.3s ease;
+  }
+
+  .filter-loading-pulse {
+    animation: filter-pulse 1.5s ease-in-out infinite !important;
+    pointer-events: none;
+  }
+}
+
+@keyframes sk-shimmer {
+    to { background-position: 200% center; }
+}
+
+@keyframes filter-pulse {
+    0% { border-color: rgba(74, 222, 128, 0.1); box-shadow: 0 0 5px rgba(39, 130, 80, 0.1); }
+    50% { border-color: rgba(74, 222, 128, 0.5); box-shadow: 0 0 20px rgba(39, 130, 80, 0.3); }
+    100% { border-color: rgba(74, 222, 128, 0.1); box-shadow: 0 0 5px rgba(39, 130, 80, 0.1); }
+}

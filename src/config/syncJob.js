@@ -186,6 +186,69 @@ async function updateConcurrencyStats() {
 
 const SAVE_DEBUG_ERRORS = process.env.SAVE_DEBUG_ERRORS === 'true'; // Controlled by .env flag
 
+/**
+ * Classifies an error into an actionable category based on error message, type, and node type.
+ * Priority order matters — more specific categories are checked first.
+ */
+function classifyError(errorMessage, errorType, nodeType) {
+    const msg = (errorMessage || '').toLowerCase();
+    const type = (errorType || '').toLowerCase();
+
+    // 1. Rate Limited (very specific, highest priority)
+    if (msg.includes('429') || msg.includes('rate limit') || msg.includes('too many requests') ||
+        msg.includes('quota exceeded') || msg.includes('throttl')) {
+        return 'rate_limit';
+    }
+
+    // 2. Auth / Credentials
+    if (msg.includes('401') || msg.includes('unauthorized') || msg.includes('forbidden') ||
+        msg.includes('403') || msg.includes('token') || msg.includes('credential') ||
+        msg.includes('authentication') || msg.includes('permission denied') ||
+        msg.includes('access denied') || msg.includes('oauth') || msg.includes('api key')) {
+        return 'auth';
+    }
+
+    // 3. Network / Timeout
+    if (msg.includes('timeout') || msg.includes('econnrefused') || msg.includes('enotfound') ||
+        msg.includes('etimedout') || msg.includes('econnreset') || msg.includes('esockettimedout') ||
+        msg.includes('dns') || msg.includes('socket hang up') || msg.includes('network') ||
+        msg.includes('cannot be established') || msg.includes('getaddrinfo') ||
+        msg.includes('connect econnrefused')) {
+        return 'network';
+    }
+
+    // 4. Upstream Server Errors (5xx)
+    if (/\b50[0-4]\b/.test(msg) || msg.includes('internal server error') ||
+        msg.includes('bad gateway') || msg.includes('service unavailable') ||
+        msg.includes('gateway timeout')) {
+        return 'upstream';
+    }
+
+    // 5. Configuration / Workflow Issues
+    if (type === 'workflowhasissueserror' || msg.includes('not configured') ||
+        msg.includes('suspended') || msg.includes('disabled') || msg.includes('not set up') ||
+        msg.includes('is not valid') || msg.includes('no value set') ||
+        msg.includes('parameter') && msg.includes('required')) {
+        return 'config';
+    }
+
+    // 6. Data / Validation
+    if (msg.includes('invalid') || msg.includes('expected') || msg.includes('missing') ||
+        msg.includes('undefined') || msg.includes('cannot read properties') ||
+        msg.includes('is not a function') || msg.includes('parse error') ||
+        msg.includes('json') && (msg.includes('parse') || msg.includes('unexpected')) ||
+        msg.includes('validation') || msg.includes('type error') || msg.includes('null')) {
+        return 'data';
+    }
+
+    // 7. Logic / Code (NodeOperationError without HTTP status)
+    if (type === 'nodeoperationerror') {
+        return 'logic';
+    }
+
+    return 'unknown';
+}
+
 async function syncErrorAnalytics(errorIdsArray) {
     if (!errorIdsArray || errorIdsArray.length === 0) return;
     console.log(`[SYNC] Fetching raw traces for ${errorIdsArray.length} errors...`);
@@ -296,6 +359,9 @@ async function syncErrorAnalytics(errorIdsArray) {
             // Fallback for timestamp
             const startedStr = row.startedAt ? row.startedAt.toISOString() : new Date().toISOString();
 
+            // Classify error at sync time
+            const errorCategory = classifyError(errorMessage, errorType, nodeType);
+
             const payload = {
                 id: row.exec_id,
                 workflow_id: row.workflow_id,
@@ -310,6 +376,7 @@ async function syncErrorAnalytics(errorIdsArray) {
                 input_data: inputData,
                 metadata: metadataJson,
                 execution_source: executionSource,
+                error_category: errorCategory,
                 started_at: startedStr
             };
 
@@ -323,8 +390,8 @@ async function syncErrorAnalytics(errorIdsArray) {
             // Insert into SQLite
             await localDb.execute(
                 `INSERT INTO execution_error_analytics 
-                 (id, workflow_id, node_id, node_name, node_type, error_type, error_message, error_stack, source_node, source_output_index, input_data, metadata, execution_source, timestamp) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 (id, workflow_id, node_id, node_name, node_type, error_type, error_message, error_stack, source_node, source_output_index, input_data, metadata, execution_source, error_category, timestamp) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(id) DO UPDATE SET 
                  node_id=excluded.node_id,
                  node_name=excluded.node_name, 
@@ -336,7 +403,8 @@ async function syncErrorAnalytics(errorIdsArray) {
                  source_output_index=excluded.source_output_index, 
                  input_data=excluded.input_data,
                  metadata=excluded.metadata,
-                 execution_source=excluded.execution_source`,
+                 execution_source=excluded.execution_source,
+                 error_category=excluded.error_category`,
                 [
                     row.exec_id,
                     row.workflow_id,
@@ -351,6 +419,7 @@ async function syncErrorAnalytics(errorIdsArray) {
                     inputData,
                     metadataJson,
                     executionSource,
+                    errorCategory,
                     startedStr
                 ]
             );
