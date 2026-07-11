@@ -361,7 +361,7 @@ async function syncErrorAnalytics(errorIdsArray) {
 
         // Debug Export
         if (SAVE_DEBUG_ERRORS && analyticsData.length > 0) {
-            const outPath = require('path').resolve(__dirname, '../scratch/debug_errors.json');
+            const outPath = require('path').resolve(__dirname, '../../scratch/debug_errors.json');
             fs.writeFileSync(outPath, JSON.stringify(analyticsData, null, 2));
             console.log(`[SYNC] Raw debug export saved to scratch/debug_errors.json`);
         }

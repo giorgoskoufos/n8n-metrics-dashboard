@@ -1,7 +1,7 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 
-const dbPath = path.resolve(__dirname, '../dashboard.sqlite');
+const dbPath = path.resolve(__dirname, '../../dashboard.sqlite');
 const localDb = new sqlite3.Database(dbPath, (err) => {
     if (err) {
         console.error('Error opening local SQLite database', err.message);

@@ -8,9 +8,9 @@ const helmet = require('helmet');
 const path = require('path');
 
 // Route Imports
-const authRoutes = require('./routes/authRoutes');
-const metricsRoutes = require('./routes/metricsRoutes');
-const aiRoutes = require('./routes/aiRoutes');
+const authRoutes = require('./src/routes/authRoutes');
+const metricsRoutes = require('./src/routes/metricsRoutes');
+const aiRoutes = require('./src/routes/aiRoutes');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -41,7 +41,7 @@ app.use('/api', aiRoutes);
 // Health Check Endpoint (returns HTTP status only — no body to leak infra state)
 app.get('/healthz', async (req, res) => {
     try {
-        const { pool } = require('./config/db');
+        const { pool } = require('./src/config/db');
         await pool.query('SELECT 1');
         res.status(200).end();
     } catch (error) {
@@ -51,7 +51,7 @@ app.get('/healthz', async (req, res) => {
 
 // ETL Sync Engine
 const cron = require('node-cron');
-const { syncData } = require('./config/syncJob');
+const { syncData } = require('./src/config/syncJob');
 
 const syncInterval = process.env.SYNC_INTERVAL_MINUTES || 5;
 cron.schedule(`*/${syncInterval} * * * *`, () => {
