@@ -15,13 +15,13 @@ async function syncData(force = false) {
     try {
         // 1. Sync Workflows (Full Sync for active/names is lightweight enough)
         const workflows = await pool.query('SELECT id, name, active FROM workflow_entity');
-        for (let w of workflows.rows) {
-            await localDb.execute(
-                `INSERT INTO workflow_entity (id, name, active) VALUES (?, ?, ?)
-                 ON CONFLICT(id) DO UPDATE SET name=excluded.name, active=excluded.active`,
-                [w.id, w.name, w.active]
-            );
-        }
+        await localDb.execute('BEGIN TRANSACTION');
+        await localDb.executeMany(
+            `INSERT INTO workflow_entity (id, name, active) VALUES (?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name, active=excluded.active`,
+            workflows.rows.map(w => [w.id, w.name, w.active])
+        );
+        await localDb.execute('COMMIT');
         console.log(`[SYNC] Synced ${workflows.rows.length} workflows.`);
 
         // 2. Sync Executions
@@ -85,23 +85,29 @@ async function syncData(force = false) {
 
         const newExecs = await pool.query(execQuery, params);
 
-        // Execute inserts in a transaction for speed
+        // One prepared statement for the whole batch, inside a single transaction,
+        // so the write lock is held briefly instead of once per row.
         if (newExecs.rows.length > 0) {
-            await localDb.execute('BEGIN TRANSACTION');
-            for (let e of newExecs.rows) {
-                const startedStr = e.startedAt ? e.startedAt.toISOString() : null;
-                const stoppedStr = e.stoppedAt ? e.stoppedAt.toISOString() : null;
-
-                await localDb.execute(
-                    `INSERT INTO execution_entity (id, "workflowId", status, "startedAt", "stoppedAt") 
-                     VALUES (?, ?, ?, ?, ?)
-                     ON CONFLICT(id) DO UPDATE SET status=excluded.status, "stoppedAt"=excluded."stoppedAt"`,
-                    [e.id, e.workflowId, e.status, startedStr, stoppedStr]
-                );
+            const batch = newExecs.rows.map(e => {
                 if (e.status === 'error' || e.status === 'crashed') {
                     errorIds.add(e.id);
                 }
-            }
+                return [
+                    e.id,
+                    e.workflowId,
+                    e.status,
+                    e.startedAt ? e.startedAt.toISOString() : null,
+                    e.stoppedAt ? e.stoppedAt.toISOString() : null
+                ];
+            });
+
+            await localDb.execute('BEGIN TRANSACTION');
+            await localDb.executeMany(
+                `INSERT INTO execution_entity (id, "workflowId", status, "startedAt", "stoppedAt")
+                 VALUES (?, ?, ?, ?, ?)
+                 ON CONFLICT(id) DO UPDATE SET status=excluded.status, "stoppedAt"=excluded."stoppedAt"`,
+                batch
+            );
             await localDb.execute('COMMIT');
         }
         console.log(`[SYNC] Synced ${newExecs.rows.length} new executions.`);
@@ -140,19 +146,23 @@ async function updateConcurrencyStats() {
 
         // 2. Fetch all potentially relevant executions (started within last 30h to catch overlaps)
         const lookback = new Date(now.getTime() - (30 * 60 * 60 * 1000)).toISOString();
+        // Compare the stored column directly instead of wrapping it in datetime().
+        // Every value is written by toISOString(), so the layout is identical and
+        // lexicographic ordering matches chronological ordering — which lets this
+        // use idx_exec_started instead of scanning the whole table.
         const execs = await localDb.query(`
-            SELECT datetime("startedAt") as sAt, 
-                   IFNULL(datetime("stoppedAt"), '') as stAt, 
-                   status 
-            FROM execution_entity 
-            WHERE datetime("startedAt") >= datetime(?) OR "stoppedAt" IS NULL
+            SELECT "startedAt" AS sAt, "stoppedAt" AS stAt, status
+            FROM execution_entity
+            WHERE "startedAt" >= ? OR "stoppedAt" IS NULL
         `, [lookback]);
 
-        const execData = execs.rows.map(e => ({
-            sAt: new Date(e.sAt + 'Z'),
-            stAt: e.stAt ? new Date(e.stAt + 'Z') : null,
-            status: e.status
-        }));
+        const execData = execs.rows
+            .filter(e => e.sAt)   // rows still queued have no start time yet
+            .map(e => ({
+                sAt: new Date(e.sAt),
+                stAt: e.stAt ? new Date(e.stAt) : null,
+                status: e.status
+            }));
 
         // 3. Calculate execution volume in JS (Count starts within bucket)
         const stats = buckets.map((bTime, index) => {
@@ -170,12 +180,10 @@ async function updateConcurrencyStats() {
         // 4. Batch Insert (using transaction)
         await localDb.execute('BEGIN TRANSACTION');
         await localDb.execute('DELETE FROM concurrency_stats WHERE timestamp < ?', [buckets[0]]);
-        for (const s of stats) {
-            await localDb.execute(
-                'INSERT OR REPLACE INTO concurrency_stats (timestamp, active_count) VALUES (?, ?)',
-                [s.timestamp, s.active_count]
-            );
-        }
+        await localDb.executeMany(
+            'INSERT OR REPLACE INTO concurrency_stats (timestamp, active_count) VALUES (?, ?)',
+            stats.map(s => [s.timestamp, s.active_count])
+        );
         await localDb.execute('COMMIT');
 
         console.log(`[SYNC] Concurrency stats updated for ${buckets.length} intervals.`);

@@ -17,9 +17,69 @@ const localDb = new sqlite3.Database(dbPath, (err) => {
         console.error('Error opening local SQLite database', err.message);
     } else {
         console.log(`Connected to the local SQLite database at ${dbPath}`);
+        applyPragmas();
         initDb();
     }
 });
+
+/**
+ * Connection tuning. Must run before any other statement.
+ *
+ * The default rollback journal takes an exclusive lock for the whole write
+ * transaction, so every ETL cycle froze all readers — the API appeared to hang
+ * on a five minute rhythm. WAL lets readers continue against the last committed
+ * snapshot while the sync writes.
+ */
+function applyPragmas() {
+    localDb.serialize(() => {
+        // Persisted in the database header — survives restarts and file copies.
+        localDb.run('PRAGMA journal_mode = WAL', (e) => {
+            if (e) console.error('[DB] Could not enable WAL:', e.message);
+        });
+        // Per-connection, so these are reapplied on every boot.
+        localDb.run('PRAGMA synchronous = NORMAL');   // safe under WAL, far fewer fsyncs
+        localDb.run('PRAGMA busy_timeout = 5000');    // wait instead of throwing SQLITE_BUSY
+        localDb.run('PRAGMA foreign_keys = ON');      // the schema declares them; enforce them
+        localDb.run('PRAGMA cache_size = -32000');    // ~32 MB page cache
+    });
+}
+
+/**
+ * Indexes for the access patterns the dashboard actually uses.
+ *
+ * Every one of these is IF NOT EXISTS and cheap to re-run. On a replica that has
+ * already been indexed offline this is a no-op; on a fresh one it costs a few
+ * seconds at boot and saves a full scan of the whole table on every request.
+ */
+function createIndexes() {
+    const indexes = [
+        // Time-range filters on the dashboard and the executions table.
+        'CREATE INDEX IF NOT EXISTS idx_exec_started ON execution_entity("startedAt")',
+        // Per-workflow drilldowns and the workflow filter.
+        'CREATE INDEX IF NOT EXISTS idx_exec_wf_started ON execution_entity("workflowId", "startedAt")',
+        // Error-rate aggregation and status filtering.
+        'CREATE INDEX IF NOT EXISTS idx_exec_status_started ON execution_entity(status, "startedAt")',
+        // Error intelligence: range scans, per-workflow drilldown, group dedup.
+        'CREATE INDEX IF NOT EXISTS idx_err_ts ON execution_error_analytics(timestamp)',
+        'CREATE INDEX IF NOT EXISTS idx_err_wf_ts ON execution_error_analytics(workflow_id, timestamp)',
+        'CREATE INDEX IF NOT EXISTS idx_err_cat_node ON execution_error_analytics(error_category, node_name)',
+        // Chat history is read per user, newest first.
+        'CREATE INDEX IF NOT EXISTS idx_chat_user_created ON dashboard_chat_history(user_id, created_at)'
+    ];
+
+    localDb.serialize(() => {
+        for (const sql of indexes) {
+            localDb.run(sql, (e) => {
+                if (e) console.error('[DB] Index creation failed:', sql, e.message);
+            });
+        }
+        // Lets the query planner choose between the indexes above instead of guessing.
+        localDb.run('ANALYZE', (e) => {
+            if (e) console.error('[DB] ANALYZE failed:', e.message);
+            else console.log('[DB] Indexes verified.');
+        });
+    });
+}
 
 function initDb() {
     localDb.serialize(() => {
@@ -39,7 +99,9 @@ function initDb() {
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
                 sql_used TEXT,
-                created_at DATETIME DEFAULT (datetime('now', 'localtime')),
+                -- UTC, matching every other timestamp in this database. The old
+                -- 'localtime' default made chat ordering depend on the server's offset.
+                created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
             )
         `);
@@ -120,6 +182,9 @@ function initDb() {
         localDb.run(`ALTER TABLE execution_error_analytics ADD COLUMN error_category TEXT DEFAULT 'unknown'`, (err) => {
             // Silence the duplicate column error on startup
         });
+
+        // Indexes last, so every table they reference already exists.
+        createIndexes();
     });
 }
 
@@ -144,6 +209,42 @@ localDb.execute = function (sql, params = []) {
                 reject(err);
             } else {
                 resolve(this);
+            }
+        });
+    });
+};
+
+/**
+ * Runs one statement over many parameter sets against a single prepared statement.
+ *
+ * The sync previously awaited a separate execute() per row, so a batch of a few
+ * thousand executions meant a few thousand parse/plan cycles and promise
+ * round-trips while holding the write lock. Preparing once and reusing keeps that
+ * lock held for a fraction of the time.
+ *
+ * The caller owns the surrounding transaction.
+ */
+localDb.executeMany = function (sql, rows) {
+    return new Promise((resolve, reject) => {
+        if (!rows || rows.length === 0) return resolve(0);
+
+        const stmt = this.prepare(sql, (prepErr) => {
+            if (prepErr) return reject(prepErr);
+
+            let pending = rows.length;
+            let failed = null;
+
+            for (const params of rows) {
+                stmt.run(params, (err) => {
+                    if (err && !failed) failed = err;
+                    if (--pending === 0) {
+                        stmt.finalize((finErr) => {
+                            const e = failed || finErr;
+                            if (e) reject(e);
+                            else resolve(rows.length);
+                        });
+                    }
+                });
             }
         });
     });

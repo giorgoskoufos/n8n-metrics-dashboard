@@ -2,6 +2,15 @@ const { pool } = require('../config/db');
 const localDb = require('../config/localDb');
 const { parse } = require('flatted');
 
+/**
+ * Relative time bounds are computed here rather than with SQLite's
+ * datetime('now', '-N days'), so they can be passed as bound parameters and the
+ * indexed column stays untouched on the left of the comparison.
+ * Always UTC, matching how every timestamp is written by the sync.
+ */
+const isoDaysAgo = (days) => new Date(Date.now() - days * 86400000).toISOString();
+const isoHoursAgo = (hours) => new Date(Date.now() - hours * 3600000).toISOString();
+
 exports.getMetrics = async (req, res) => {
     try {
         const targetWorkflow = req.query.workflow; 
@@ -42,94 +51,96 @@ exports.getMetrics = async (req, res) => {
             bucketUnit = 'day';
         }
 
-        const buildTimeFilter = (val, isRelative = false) => {
-            return isRelative ? `datetime('now', '${val}')` : `datetime('${val}')`;
-        };
-
-        const currentStart = buildTimeFilter(startIso, !isCustom);
-        const currentEnd = buildTimeFilter(endIso, !isCustom);
-        const prevStart = buildTimeFilter(prevStartIso, !isCustom);
-        const prevEnd = buildTimeFilter(prevEndIso, !isCustom);
-
-        // Standardize filters for all queries
+        // Standardize filters for all queries.
+        // Date bounds are bound parameters and the column is compared directly
+        // rather than through datetime(), so these can use idx_exec_started.
         const wfFilterClause = targetWorkflow ? 'AND w.name = ?' : '';
         const wfJoinClause = targetWorkflow ? 'JOIN workflow_entity w ON e."workflowId" = w.id' : '';
-        const params = targetWorkflow ? [targetWorkflow] : [];
+        const wfParam = targetWorkflow ? [targetWorkflow] : [];
+
+        // Order matters: the date bounds appear in the WHERE clause before the
+        // optional workflow filter that wfFilterClause appends after them.
+        const currentParams = [startIso, endIso, ...wfParam];
+        const prevParams = [prevStartIso, prevEndIso, ...wfParam];
 
         const statsQuery = `
-            SELECT COUNT(*) as total, 
+            SELECT COUNT(*) as total,
                    SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error,
                    AVG((julianday("stoppedAt") - julianday("startedAt")) * 86400) as avg_duration
             FROM execution_entity e
             ${wfJoinClause}
-            WHERE datetime(e."startedAt") >= ${currentStart} AND datetime(e."startedAt") <= ${currentEnd}
+            WHERE e."startedAt" >= ? AND e."startedAt" <= ?
             ${wfFilterClause};
         `;
 
         const prevStatsQuery = `
-            SELECT COUNT(*) as total, 
+            SELECT COUNT(*) as total,
                    SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error
             FROM execution_entity e
             ${wfJoinClause}
-            WHERE datetime(e."startedAt") >= ${prevStart} AND datetime(e."startedAt") < ${prevEnd}
+            WHERE e."startedAt" >= ? AND e."startedAt" < ?
             ${wfFilterClause};
         `;
 
         const topWorkflowsQuery = `
             SELECT w.name AS workflow_name, COUNT(e.id) AS execution_count,
-                   ROUND((COUNT(e.id) * 100.0 / NULLIF((SELECT COUNT(*) FROM execution_entity e ${wfJoinClause} WHERE datetime(e."startedAt") >= ${currentStart} AND datetime(e."startedAt") <= ${currentEnd} ${wfFilterClause}), 0)), 2) AS percentage
+                   ROUND((COUNT(e.id) * 100.0 / NULLIF(SUM(COUNT(e.id)) OVER (), 0)), 2) AS percentage
             FROM execution_entity e
             JOIN workflow_entity w ON e."workflowId" = w.id
-            WHERE datetime(e."startedAt") >= ${currentStart} AND datetime(e."startedAt") <= ${currentEnd}
+            WHERE e."startedAt" >= ? AND e."startedAt" <= ?
             ${wfFilterClause}
             GROUP BY w.id, w.name
             ORDER BY execution_count DESC;
         `;
 
-        const hourlyQuery = `
-            SELECT status, "startedAt" 
-            FROM execution_entity e
-            ${wfJoinClause}
-            WHERE datetime(e."startedAt") >= ${currentStart} AND datetime(e."startedAt") <= ${currentEnd}
-            ${wfFilterClause}
-        `;
+        // Bucket boundaries. Computed here because the SQL below derives its bucket
+        // index from the same origin, which keeps the grouping identical to the
+        // previous JavaScript implementation (including local-midnight day starts).
+        const stepMs = bucketUnit === 'day' ? 86400000 : 3600000;
+        const startPoint = new Date(new Date(startIso).getTime());
+        const endPointFull = new Date(new Date(endIso).getTime());
+        if (bucketUnit === 'day') startPoint.setHours(0, 0, 0, 0);
+        else startPoint.setMinutes(0, 0, 0);
 
-        const [stats, prevStats, execs, topWorkflows] = await Promise.all([
-            localDb.query(statsQuery, params),
-            localDb.query(prevStatsQuery, params),
-            localDb.query(hourlyQuery, params), 
-            localDb.query(topWorkflowsQuery, params)
-        ]);
-
-        // Generate buckets for the chart
         const buckets = [];
-        let stepMs = bucketUnit === 'day' ? 86400000 : 3600000;
-        
-        let startPoint = new Date(new Date(startIso).getTime());
-        let endPointFull = new Date(new Date(endIso).getTime());
-        if (bucketUnit === 'day') startPoint.setHours(0,0,0,0);
-        else startPoint.setMinutes(0,0,0);
-
-        let temp = new Date(startPoint);
-        while (temp <= endPointFull) {
-            buckets.push(temp.toISOString());
-            temp = new Date(temp.getTime() + stepMs);
+        for (let t = startPoint.getTime(); t <= endPointFull.getTime(); t += stepMs) {
+            buckets.push(new Date(t).toISOString());
         }
 
-        // Map executions into buckets
-        const hourly = buckets.map(bTime => {
-            const bStart = new Date(bTime);
-            const bEnd = new Date(bStart.getTime() + stepMs);
-            
-            const matches = execs.rows.filter(e => {
-                const sAt = new Date(e.startedAt + (e.startedAt.endsWith('Z') ? '' : 'Z'));
-                return sAt >= bStart && sAt < bEnd;
-            });
+        // Counting happens in SQL. This used to pull every execution in the range
+        // into memory — over 140k rows for a 60 day window — and bucket them with a
+        // nested filter per bucket. Now it returns one row per bucket.
+        const bucketQuery = `
+            SELECT CAST((julianday(e."startedAt") - julianday(?)) * 86400.0 / ? AS INTEGER) AS bucket_idx,
+                   SUM(CASE WHEN e.status = 'success' THEN 1 ELSE 0 END) AS success_count,
+                   SUM(CASE WHEN e.status <> 'success' THEN 1 ELSE 0 END) AS error_count
+            FROM execution_entity e
+            ${wfJoinClause}
+            WHERE e."startedAt" >= ? AND e."startedAt" <= ?
+            ${wfFilterClause}
+            GROUP BY bucket_idx
+        `;
 
+        const [stats, prevStats, bucketRows, topWorkflows] = await Promise.all([
+            localDb.query(statsQuery, currentParams),
+            localDb.query(prevStatsQuery, prevParams),
+            localDb.query(bucketQuery, [
+                startPoint.toISOString(), stepMs / 1000, startIso, endIso, ...wfParam
+            ]),
+            localDb.query(topWorkflowsQuery, currentParams)
+        ]);
+
+        // Expand the sparse SQL result back into a dense series so empty buckets
+        // still render as zero rather than being dropped from the chart.
+        const countsByIndex = new Map(
+            bucketRows.rows.map(r => [r.bucket_idx, r])
+        );
+        const hourly = buckets.map((bTime, idx) => {
+            const row = countsByIndex.get(idx);
             return {
                 time_val: bTime,
-                success_count: matches.filter(m => m.status === 'success').length,
-                error_count: matches.filter(m => m.status !== 'success').length
+                success_count: row ? row.success_count : 0,
+                error_count: row ? row.error_count : 0
             };
         });
 
@@ -220,11 +231,11 @@ exports.getExecutions = async (req, res) => {
         params.push(status);
     }
     if (from) {
-        conditions.push('datetime(e."startedAt") >= datetime(?)');
+        conditions.push('e."startedAt" >= ?');
         params.push(new Date(from).toISOString());
     }
     if (toStop) {
-        conditions.push('datetime(e."startedAt") <= datetime(?)');
+        conditions.push('e."startedAt" <= ?');
         params.push(new Date(toStop).toISOString());
     }
     if (minDuration && parseFloat(minDuration) > 0) {
@@ -241,7 +252,7 @@ exports.getExecutions = async (req, res) => {
             FROM execution_entity e
             JOIN workflow_entity w ON e."workflowId" = w.id
             ${whereClause}
-            ORDER BY datetime(e."startedAt") DESC
+            ORDER BY e."startedAt" DESC
             LIMIT ? OFFSET ?;
         `;
         const result = await localDb.query(query, [...params, limit, offset]);
@@ -260,13 +271,13 @@ exports.getSlowest = async (req, res) => {
                    COUNT(e.id) as total_runs
             FROM execution_entity e
             JOIN workflow_entity w ON e."workflowId" = w.id
-            WHERE datetime(e."startedAt") > datetime('now', '-7 days')
+            WHERE e."startedAt" > ?
               AND e."stoppedAt" IS NOT NULL
             GROUP BY w.id, w.name
             ORDER BY avg_duration DESC
             LIMIT 10;
         `;
-        const result = await localDb.query(query);
+        const result = await localDb.query(query, [isoDaysAgo(7)]);
         res.json(result.rows);
     } catch (err) {
         console.error(err);
@@ -282,13 +293,13 @@ exports.getErrors = async (req, res) => {
                    COUNT(e.id) as total_runs
             FROM execution_entity e
             JOIN workflow_entity w ON e."workflowId" = w.id
-            WHERE datetime(e."startedAt") > datetime('now', '-7 days')
+            WHERE e."startedAt" > ?
             GROUP BY w.id, w.name
             HAVING SUM(CASE WHEN e.status = 'error' THEN 1 ELSE 0 END) > 0
             ORDER BY error_count DESC
             LIMIT 10;
         `;
-        const result = await localDb.query(query);
+        const result = await localDb.query(query, [isoDaysAgo(7)]);
         res.json(result.rows);
     } catch (err) {
         console.error(err);
@@ -402,14 +413,16 @@ exports.getSettings = async (req, res) => {
                 COALESCE(s.saved_time_seconds, 0) as saved_time_seconds,
                 COALESCE(s.hourly_rate, 0) as hourly_rate,
                 COUNT(e.id) as execution_count,
-                SUM(CASE WHEN e.status = 'success' AND datetime(e."startedAt") >= datetime('now', '-30 days', 'localtime') THEN 1 ELSE 0 END) as executions_30d
+                SUM(CASE WHEN e.status = 'success' AND e."startedAt" >= ? THEN 1 ELSE 0 END) as executions_30d
             FROM workflow_entity w
             LEFT JOIN workflow_settings s ON w.id = s.workflow_id
             LEFT JOIN execution_entity e ON w.id = e."workflowId" AND e.status = 'success'
             GROUP BY w.id, w.name, s.saved_time_seconds, s.hourly_rate
             ORDER BY w.name ASC
         `;
-        const result = await localDb.query(query);
+        // The previous bound mixed 'localtime' into a comparison against UTC
+        // timestamps, so the 30-day window was off by the server's UTC offset.
+        const result = await localDb.query(query, [isoDaysAgo(30)]);
         res.json(result.rows);
     } catch (err) {
         console.error(err);
@@ -444,17 +457,13 @@ exports.getRoiMetrics = async (req, res) => {
     try {
         const { timeRange } = req.query;
         let timeFilter = "";
-        
+        const timeParams = [];
+
         if (timeRange && timeRange !== 'all') {
-            const now = new Date();
-            let lookbackHours = 24;
-            if (timeRange === '48h') lookbackHours = 48;
-            if (timeRange === '7d') lookbackHours = 168;
-            if (timeRange === '30d') lookbackHours = 720;
-            
-            const pastDateStr = new Date(now.getTime() - (lookbackHours * 60 * 60 * 1000)).toISOString();
-            // Using e."startedAt", since datetime(e."startedAt") is used in getMetrics
-            timeFilter = ` AND datetime(e."startedAt") >= datetime('${pastDateStr}')`;
+            const LOOKBACK_HOURS = { '24h': 24, '48h': 48, '7d': 168, '30d': 720 };
+            const lookbackHours = LOOKBACK_HOURS[timeRange] || 24;
+            timeFilter = ` AND e."startedAt" >= ?`;
+            timeParams.push(isoHoursAgo(lookbackHours));
         }
 
         const totalQuery = `
@@ -484,8 +493,8 @@ exports.getRoiMetrics = async (req, res) => {
         `;
         
         const [totalStats, wfStats] = await Promise.all([
-            localDb.query(totalQuery),
-            localDb.query(workflowsQuery)
+            localDb.query(totalQuery, timeParams),
+            localDb.query(workflowsQuery, timeParams)
         ]);
 
         res.json({
@@ -527,8 +536,8 @@ exports.getConcurrencyData = async (req, res) => {
         const query = `
             SELECT "startedAt" 
             FROM execution_entity 
-            WHERE datetime("startedAt") >= datetime(?) 
-              AND datetime("startedAt") <= datetime(?)
+            WHERE "startedAt" >= ? 
+              AND "startedAt" <= ?
         `;
         const execs = await localDb.query(query, [new Date(start).toISOString(), new Date(end).toISOString()]);
 
@@ -608,23 +617,32 @@ exports.getConcurrencyDetails = async (req, res) => {
     if (!time) return res.status(400).json({ error: 'time parameter is required' });
 
     const span = parseInt(windowMins) || 5;
-    
+
+    const windowStartMs = new Date(time).getTime();
+    if (Number.isNaN(windowStartMs)) {
+        return res.status(400).json({ error: 'time must be a valid ISO date' });
+    }
+    // The window end used to be computed inside SQL with a datetime() modifier,
+    // which forced a scan. Computing it here keeps the indexed column bare.
+    const windowEndIso = new Date(windowStartMs + span * 60000).toISOString();
+
     try {
-        // Calculate the end of the window in SQL
         const query = `
             SELECT w.name as workflow_name, w.id as workflow_id, e.id as exec_id, e.status, e."startedAt", e."stoppedAt",
-                   (julianday(IFNULL(e."stoppedAt", datetime('now'))) - julianday(e."startedAt")) * 86400 as current_duration
+                   (julianday(IFNULL(e."stoppedAt", ?)) - julianday(e."startedAt")) * 86400 as current_duration
             FROM execution_entity e
             JOIN workflow_entity w ON e."workflowId" = w.id
-            WHERE datetime(e."startedAt") <= datetime(?, '+' || ? || ' minutes')
+            WHERE e."startedAt" <= ?
               AND (
-                  datetime(e."stoppedAt") >= datetime(?) OR
-                  (e.status = 'running' AND datetime(e."startedAt") > datetime('now', '-6 hours'))
+                  e."stoppedAt" >= ? OR
+                  (e.status = 'running' AND e."startedAt" > ?)
               )
-            ORDER BY datetime(e."startedAt") DESC
+            ORDER BY e."startedAt" DESC
             LIMIT 50
         `;
-        const result = await localDb.query(query, [time, span, time]);
+        const result = await localDb.query(query, [
+            new Date().toISOString(), windowEndIso, time, isoHoursAgo(6)
+        ]);
         
         const finalUrl = process.env.N8N_EDITOR_BASE_URL || '';
         const mappedRows = result.rows.map(row => ({
@@ -668,27 +686,27 @@ exports.getErrorIntelligence = async (req, res) => {
                 SUM(CASE WHEN error_category IN ('rate_limit','network','upstream') THEN 1 ELSE 0 END) as transient_count,
                 SUM(CASE WHEN error_category IN ('auth','config','data','logic') THEN 1 ELSE 0 END) as structural_count
             FROM execution_error_analytics
-            WHERE datetime(timestamp) >= datetime('${startIso}') AND datetime(timestamp) <= datetime('${endIso}')
+            WHERE timestamp >= ? AND timestamp <= ?
         `;
 
         const prevSummaryQuery = `
             SELECT COUNT(*) as total_errors
             FROM execution_error_analytics
-            WHERE datetime(timestamp) >= datetime('${prevStartIso}') AND datetime(timestamp) < datetime('${prevEndIso}')
+            WHERE timestamp >= ? AND timestamp < ?
         `;
 
         // Total executions for error rate calculation
         const execCountQuery = `
             SELECT COUNT(*) as total
             FROM execution_entity
-            WHERE datetime("startedAt") >= datetime('${startIso}') AND datetime("startedAt") <= datetime('${endIso}')
+            WHERE "startedAt" >= ? AND "startedAt" <= ?
         `;
 
         // 2. Category Breakdown
         const categoryQuery = `
             SELECT error_category, COUNT(*) as count
             FROM execution_error_analytics
-            WHERE datetime(timestamp) >= datetime('${startIso}') AND datetime(timestamp) <= datetime('${endIso}')
+            WHERE timestamp >= ? AND timestamp <= ?
             GROUP BY error_category
             ORDER BY count DESC
         `;
@@ -697,7 +715,7 @@ exports.getErrorIntelligence = async (req, res) => {
         const trendQuery = `
             SELECT date(timestamp) as day, error_category, COUNT(*) as count
             FROM execution_error_analytics
-            WHERE datetime(timestamp) >= datetime('${startIso}') AND datetime(timestamp) <= datetime('${endIso}')
+            WHERE timestamp >= ? AND timestamp <= ?
             GROUP BY date(timestamp), error_category
             ORDER BY day ASC
         `;
@@ -711,7 +729,7 @@ exports.getErrorIntelligence = async (req, res) => {
                 ROUND((1.0 - (CAST(COUNT(CASE WHEN e.status = 'error' THEN 1 END) AS REAL) / NULLIF(COUNT(e.id), 0))) * 100, 1) as health_score
             FROM workflow_entity w
             JOIN execution_entity e ON w.id = e."workflowId"
-            WHERE datetime(e."startedAt") >= datetime('${startIso}') AND datetime(e."startedAt") <= datetime('${endIso}')
+            WHERE e."startedAt" >= ? AND e."startedAt" <= ?
             GROUP BY w.id, w.name
             HAVING COUNT(CASE WHEN e.status = 'error' THEN 1 END) > 0
             ORDER BY health_score ASC
@@ -732,20 +750,20 @@ exports.getErrorIntelligence = async (req, res) => {
                 GROUP_CONCAT(DISTINCT w.name) as workflow_names
             FROM execution_error_analytics a
             JOIN workflow_entity w ON a.workflow_id = w.id
-            WHERE datetime(a.timestamp) >= datetime('${startIso}') AND datetime(a.timestamp) <= datetime('${endIso}')
+            WHERE a.timestamp >= ? AND a.timestamp <= ?
             GROUP BY a.error_category, a.node_name, SUBSTR(a.error_message, 1, 200)
             ORDER BY count DESC
             LIMIT 50
         `;
 
         const [summary, prevSummary, execCount, categories, trend, health, groups] = await Promise.all([
-            localDb.query(summaryQuery),
-            localDb.query(prevSummaryQuery),
-            localDb.query(execCountQuery),
-            localDb.query(categoryQuery),
-            localDb.query(trendQuery),
-            localDb.query(healthQuery),
-            localDb.query(groupsQuery)
+            localDb.query(summaryQuery, [startIso, endIso]),
+            localDb.query(prevSummaryQuery, [prevStartIso, prevEndIso]),
+            localDb.query(execCountQuery, [startIso, endIso]),
+            localDb.query(categoryQuery, [startIso, endIso]),
+            localDb.query(trendQuery, [startIso, endIso]),
+            localDb.query(healthQuery, [startIso, endIso]),
+            localDb.query(groupsQuery, [startIso, endIso])
         ]);
 
         const totalErrors = summary.rows[0].total_errors || 0;
@@ -803,7 +821,7 @@ exports.getWorkflowErrorDrilldown = async (req, res) => {
         const distributionQuery = `
             SELECT node_name, COUNT(*) as count
             FROM execution_error_analytics
-            WHERE workflow_id = ? AND datetime(timestamp) > datetime('now', '-7 days')
+            WHERE workflow_id = ? AND timestamp > ?
             GROUP BY node_name
             ORDER BY count DESC
         `;
@@ -812,7 +830,7 @@ exports.getWorkflowErrorDrilldown = async (req, res) => {
         const sourceQuery = `
             SELECT source_node, source_output_index, COUNT(*) as count
             FROM execution_error_analytics
-            WHERE workflow_id = ? AND source_node != '' AND datetime(timestamp) > datetime('now', '-7 days')
+            WHERE workflow_id = ? AND source_node != '' AND timestamp > ?
             GROUP BY source_node, source_output_index
             ORDER BY count DESC
             LIMIT 5
@@ -823,7 +841,7 @@ exports.getWorkflowErrorDrilldown = async (req, res) => {
             SELECT id as exec_id, node_name, node_type, error_message, error_stack, source_node, source_output_index as branch, timestamp as started_at
             FROM execution_error_analytics
             WHERE workflow_id = ?
-            ORDER BY datetime(timestamp) DESC
+            ORDER BY timestamp DESC
             LIMIT 200
         `;
 
@@ -831,8 +849,8 @@ exports.getWorkflowErrorDrilldown = async (req, res) => {
         const infoQuery = `SELECT name FROM workflow_entity WHERE id = ?`;
 
         const [dist, sources, raw, info] = await Promise.all([
-            localDb.query(distributionQuery, [id]),
-            localDb.query(sourceQuery, [id]),
+            localDb.query(distributionQuery, [id, isoDaysAgo(7)]),
+            localDb.query(sourceQuery, [id, isoDaysAgo(7)]),
             localDb.query(rawQuery, [id]),
             localDb.query(infoQuery, [id])
         ]);
@@ -866,7 +884,7 @@ exports.getErrorGroupExecutions = async (req, res) => {
             SELECT a.id as exec_id, a.timestamp, w.name as workflow_name
             FROM execution_error_analytics a
             JOIN workflow_entity w ON a.workflow_id = w.id
-            WHERE datetime(a.timestamp) >= datetime(?) AND datetime(a.timestamp) <= datetime(?)
+            WHERE a.timestamp >= ? AND a.timestamp <= ?
               AND a.error_category = ?
               AND a.node_name = ?
               AND SUBSTR(a.error_message, 1, 200) = ?
