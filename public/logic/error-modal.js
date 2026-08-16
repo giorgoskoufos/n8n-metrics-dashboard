@@ -30,7 +30,7 @@
                         <p class="text-[10px] text-gray-500 uppercase tracking-widest" id="modalTimestamp">Post-Mortem Analysis</p>
                     </div>
                 </div>
-                <button onclick="closeErrorModal()" class="text-gray-500 hover:text-white transition-colors p-2">
+                <button data-action="closeErrorModal" class="text-gray-500 hover:text-white transition-colors p-2">
                     <i class="fa-solid fa-xmark text-xl"></i>
                 </button>
             </div>
@@ -52,7 +52,7 @@
                         Loading...
                     </div>
                     <!-- Refined Square Copy Button -->
-                    <button onclick="copyErrorMessage()" 
+                    <button data-action="copyErrorMessage" 
                         class="absolute top-3 right-3 w-8 h-8 flex items-center justify-center text-white/40 hover:text-white transition-all bg-black/60 hover:bg-indigo-600 rounded-md border border-white/10 z-20 shadow-lg"
                         title="Copy Error Content">
                         <i id="copyIcon" class="fa-regular fa-copy text-xs"></i>
@@ -131,8 +131,21 @@
             }
 
             if (n8nLink && data.workflowId && data.n8nBaseUrl) {
-                n8nLink.href = `${data.n8nBaseUrl}/workflow/${data.workflowId}/executions/${execId}`;
-                n8nLink.style.display = 'flex';
+                // Build through the URL API so a hostile id cannot break out of the
+                // path, and reject anything that is not http(s) — an href is one of
+                // the few places a javascript: scheme still executes.
+                try {
+                    const target = new URL(
+                        `workflow/${encodeURIComponent(data.workflowId)}/executions/${encodeURIComponent(execId)}`,
+                        data.n8nBaseUrl.endsWith('/') ? data.n8nBaseUrl : data.n8nBaseUrl + '/'
+                    );
+                    if (target.protocol === 'http:' || target.protocol === 'https:') {
+                        n8nLink.href = target.href;
+                        n8nLink.style.display = 'flex';
+                    }
+                } catch (e) {
+                    console.warn('[MODAL] Could not build n8n link:', e);
+                }
             }
         } catch (err) {
             msgBox.innerText = 'No instant snapshot found. Use "Fetch Raw Trace" for a deep inspection.';
@@ -198,6 +211,17 @@
         if (modal && event.target === modal) {
             window.closeErrorModal();
         }
+    });
+
+    // Delegated handler for every "open the error snapshot" affordance.
+    // Rows and buttons carry data-error-exec-id instead of an inline onclick, so
+    // execution ids never get concatenated into executable markup and the page
+    // does not depend on script-src 'unsafe-inline'.
+    document.addEventListener('click', (event) => {
+        const trigger = event.target.closest('[data-error-exec-id]');
+        if (!trigger) return;
+        event.preventDefault();
+        window.showErrorSnapshot(trigger.getAttribute('data-error-exec-id'));
     });
 
 })();

@@ -277,8 +277,13 @@ function appendMessage(role, text, sql = null) {
             `;
         }
 
-        // Parse markdown for AI responses, escape for errors
-        const formattedContent = isError ? escapeHtml(text) : marked.parse(text);
+        // Parse markdown for AI responses, escape for errors.
+        // The AI's answer is built from database content — workflow names, node
+        // names, error messages — so raw HTML can reach here. marked emits HTML
+        // verbatim, which makes DOMPurify mandatory rather than belt-and-braces.
+        const formattedContent = isError
+            ? escapeHtml(text)
+            : window.renderMarkdownSafely(text);
 
         msgDiv.classList.add('justify-start', 'gap-3', 'items-start');
         msgDiv.innerHTML = `
@@ -329,15 +334,8 @@ function scrollToBottom() {
     if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
 }
 
-function escapeHtml(unsafe) {
-    if (!unsafe) return '';
-    return unsafe
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
+// escapeHtml lives in global_functions.js, loaded before this file.
+
 
 // --- SECTION 5: VIEWPORT HANDLING (iOS Fix) ---
 

@@ -1,28 +1,90 @@
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../config/db');
 const { JWT_SECRET } = require('../middlewares/auth');
 
+// Compared against when no user matches, so a missing account costs the same time
+// as a wrong password. Without it, response latency reveals which emails exist.
+const DUMMY_HASH = bcrypt.hashSync(crypto.randomBytes(32).toString('hex'), 10);
+
+// n8n's user table has changed shape across major versions — roleSlug is 2.x,
+// 1.x used a separate role relation. Probe the schema once and build the SELECT
+// from the columns that actually exist, so login keeps working on either.
+let userColumnsPromise = null;
+function getUserColumns() {
+    if (!userColumnsPromise) {
+        userColumnsPromise = pool
+            .query(
+                `SELECT column_name FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'user'`
+            )
+            .then((r) => new Set(r.rows.map((x) => x.column_name)))
+            .catch((err) => {
+                userColumnsPromise = null; // allow a retry on the next login
+                throw err;
+            });
+    }
+    return userColumnsPromise;
+}
+
 exports.login = async (req, res) => {
     const { email, password } = req.body;
 
-    try {
-        const query = 'SELECT id, email, password, "firstName", "lastName" FROM "user" WHERE email = $1';
-        const dbRes = await pool.query(query, [email]);
+    if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) {
+        return res.status(400).json({ error: 'Email and password are required' });
+    }
 
-        if (dbRes.rows.length === 0) {
-            return res.status(401).json({ error: 'Wrong Credentials' });
-        }
+    try {
+        const columns = await getUserColumns();
+        const optional = ['disabled', 'mfaEnabled', 'roleSlug'].filter((c) => columns.has(c));
+        const selectList = ['id', 'email', 'password', '"firstName"', '"lastName"']
+            .concat(optional.map((c) => `"${c}"`))
+            .join(', ');
+
+        const dbRes = await pool.query(
+            `SELECT ${selectList} FROM "user" WHERE email = $1`,
+            [email]
+        );
 
         const user = dbRes.rows[0];
-        const isMatch = await bcrypt.compare(password, user.password);
 
-        if (!isMatch) {
+        // Always run a comparison, even with no user, to keep the timing uniform.
+        const isMatch = await bcrypt.compare(password, user ? user.password : DUMMY_HASH);
+
+        if (!user || !isMatch) {
             return res.status(401).json({ error: 'Wrong Credentials' });
         }
 
+        // Deactivating a user in n8n must lock them out here too. Same generic
+        // message as a bad password — a disabled account isn't owed an explanation.
+        if (user.disabled === true) {
+            console.warn(`[AUTH] Login blocked for disabled n8n user: ${user.email}`);
+            return res.status(401).json({ error: 'Wrong Credentials' });
+        }
+
+        // The password alone is not enough for an account that n8n protects with a
+        // second factor. Accepting it here would make this dashboard the weak door
+        // into the same data. Only reached once the password is already verified.
+        if (user.mfaEnabled === true) {
+            console.warn(`[AUTH] Login blocked for MFA-enabled n8n user: ${user.email}`);
+            return res.status(403).json({
+                error:
+                    'This account has two-factor authentication enabled in n8n, which the dashboard ' +
+                    'does not support yet. Use an account without 2FA, or disable it in n8n.'
+            });
+        }
+
+        // jti gives every token a unique id, so individual sessions can be revoked
+        // later without rotating the signing secret and logging everyone out.
         const token = jwt.sign(
-            { id: user.id, email: user.email, firstName: user.firstName },
+            {
+                id: user.id,
+                email: user.email,
+                firstName: user.firstName,
+                role: user.roleSlug || null,
+                jti: crypto.randomUUID()
+            },
             JWT_SECRET,
             { expiresIn: '8h' }
         );

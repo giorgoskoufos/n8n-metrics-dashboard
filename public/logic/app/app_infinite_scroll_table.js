@@ -31,16 +31,18 @@ window.loadMoreExecutions = async function(reset = false) {
                 ? `<span class="flex items-center gap-2 text-[#278250]"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg> Success</span>`
                 : `<span class="flex items-center gap-2 text-[#f16a75] font-bold"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path></svg> Error</span>`;
 
-            const actionAttr = isError ? `onclick="showError('${exec.exec_id}')" style="cursor: pointer;" title="View Error"` : '';
+            const actionAttr = isError
+                ? `data-error-exec-id="${escapeHtml(exec.exec_id)}" style="cursor: pointer;" title="View Error"`
+                : '';
 
             tbody.innerHTML += `
                 <tr class="hover:bg-gray-800/30 transition-colors text-sm border-b border-gray-800/50" ${actionAttr}>
-                    <td class="p-4 text-gray-500 font-mono">#${exec.exec_id}</td>
-                    <td class="p-4 text-white">${exec.name}</td>
+                    <td class="p-4 text-gray-500 font-mono">#${escapeHtml(exec.exec_id)}</td>
+                    <td class="p-4 text-white">${escapeHtml(exec.name)}</td>
                     <td class="p-4">${statusHtml}</td>
-                    <td class="p-4 text-n8n-text">${startStr}</td>
-                    <td class="p-4 text-n8n-text">${endStr}</td>
-                    <td class="p-4 text-n8n-text">${duration}</td>
+                    <td class="p-4 text-n8n-text">${escapeHtml(startStr)}</td>
+                    <td class="p-4 text-n8n-text">${escapeHtml(endStr)}</td>
+                    <td class="p-4 text-n8n-text">${escapeHtml(duration)}</td>
                 </tr>
             `;
         });

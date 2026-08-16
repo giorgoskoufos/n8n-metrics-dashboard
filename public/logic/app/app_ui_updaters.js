@@ -201,7 +201,7 @@ window.fetchConcurrencyDetails = async function(timestamp, windowSize = 5) {
 
     if (!modal) return;
 
-    tbody.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-gray-500 italic">Fetching executions starting at ${timestamp}...</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-gray-500 italic">Fetching executions starting at ${escapeHtml(timestamp)}...</td></tr>`;
 
     // Display range in subtitle
     const startDate = new Date(timestamp);
@@ -238,14 +238,14 @@ window.fetchConcurrencyDetails = async function(timestamp, windowSize = 5) {
             let actionBtn = '';
             if (isError) {
                 actionBtn = `
-                    <button onclick="showError('${exec.exec_id}')" class="text-red-500 hover:text-red-400 transition-colors" title="View Error Log">
+                    <button data-error-exec-id="${escapeHtml(exec.exec_id)}" class="text-red-500 hover:text-red-400 transition-colors" title="View Error Log">
                         <i class="fa-solid fa-arrow-right"></i>
                     </button>
                 `;
             } else if (exec.n8nBaseUrl && exec.workflow_id) {
-                const link = `${exec.n8nBaseUrl}/workflow/${exec.workflow_id}/executions/${exec.exec_id}`;
+                const link = `${exec.n8nBaseUrl}/workflow/${encodeURIComponent(exec.workflow_id)}/executions/${encodeURIComponent(exec.exec_id)}`;
                 actionBtn = `
-                    <a href="${link}" target="_blank" class="text-indigo-400 hover:text-indigo-300 transition-colors" title="Open Execution in n8n">
+                    <a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer" class="text-indigo-400 hover:text-indigo-300 transition-colors" title="Open Execution in n8n">
                         <i class="fa-solid fa-arrow-up-right-from-square"></i>
                     </a>
                 `;
@@ -253,10 +253,10 @@ window.fetchConcurrencyDetails = async function(timestamp, windowSize = 5) {
 
             return `
             <tr class="hover:bg-gray-800/30 transition-colors border-b border-gray-800/50">
-                <td class="p-4 text-white font-semibold text-sm truncate max-w-[200px]">${exec.workflow_name}</td>
-                <td class="p-4"><span class="${statusColor} text-[10px] font-bold uppercase tracking-tight"><i class="fa-solid ${statusIcon} mr-1"></i> ${exec.status}</span></td>
-                <td class="p-4 text-gray-400 text-xs">${timeString}</td>
-                <td class="p-4 text-gray-500 text-[10px] font-mono">${durationStr}</td>
+                <td class="p-4 text-white font-semibold text-sm truncate max-w-[200px]">${escapeHtml(exec.workflow_name)}</td>
+                <td class="p-4"><span class="${statusColor} text-[10px] font-bold uppercase tracking-tight"><i class="fa-solid ${statusIcon} mr-1"></i> ${escapeHtml(exec.status)}</span></td>
+                <td class="p-4 text-gray-400 text-xs">${escapeHtml(timeString)}</td>
+                <td class="p-4 text-gray-500 text-[10px] font-mono">${escapeHtml(durationStr)}</td>
                 <td class="p-4 text-right">
                     ${actionBtn}
                 </td>
@@ -394,11 +394,11 @@ window.initExecutionsHeader = function() {
             </td>
             <td class="px-3 py-3">
                 <div class="flex flex-col items-center gap-1">
-                    <button onclick="applyExecFilters()" title="Apply filters"
+                    <button data-action="applyExecFilters" title="Apply filters"
                         class="w-[26px] h-[22px] text-[9px] bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-600/50 hover:border-indigo-400/60 active:bg-indigo-600/70 transition-colors rounded flex items-center justify-center">
                         <i class="fa-solid fa-check"></i>
                     </button>
-                    <button onclick="clearExecFilters()" title="Clear all filters"
+                    <button data-action="clearExecFilters" title="Clear all filters"
                         class="w-[26px] h-[22px] text-[9px] bg-gray-700/20 border border-gray-600/30 text-gray-400 hover:bg-n8n-primary/20 hover:border-n8n-primary/40 hover:text-n8n-primary active:bg-n8n-primary/30 active:border-n8n-primary/60 transition-colors rounded flex items-center justify-center">
                         <i class="fa-solid fa-xmark"></i>
                     </button>

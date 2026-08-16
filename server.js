@@ -21,12 +21,29 @@ app.use(helmet({
     contentSecurityPolicy: {
         directives: {
             ...helmet.contentSecurityPolicy.getDefaultDirectives(),
-            "script-src": ["'self'", "'unsafe-inline'", "cdn.tailwindcss.com", "cdn.jsdelivr.net", "cdnjs.cloudflare.com"],
-            "script-src-attr": ["'unsafe-inline'"],
+
+            // No 'unsafe-inline'. Every inline onclick has been replaced by the
+            // data-action dispatcher in global_functions.js, which is what lets this
+            // directive actually hold — with it present, one missed escape anywhere
+            // turns straight into script execution and a stolen auth token.
+            "script-src": ["'self'", "cdn.jsdelivr.net"],
+
+            // Blocks inline event handler attributes outright, so a reintroduced
+            // onclick= fails loudly in the console instead of silently reopening the hole.
+            "script-src-attr": ["'none'"],
+
+            // Still needed: Tailwind emits inline style attributes (skeleton loaders
+            // size their bars this way). Inline style is a far smaller risk than
+            // inline script — it cannot execute.
             "style-src": ["'self'", "'unsafe-inline'", "fonts.googleapis.com", "cdnjs.cloudflare.com"],
             "font-src": ["'self'", "fonts.gstatic.com", "cdnjs.cloudflare.com"],
-            "connect-src": ["'self'", "cdn.jsdelivr.net", "cdnjs.cloudflare.com"],
-            "img-src": ["'self'", "data:", "https://*"],
+            "connect-src": ["'self'"],
+            "img-src": ["'self'", "data:"],
+
+            // Nothing here embeds or is embedded, and no plugin content is expected.
+            "object-src": ["'none'"],
+            "base-uri": ["'self'"],
+            "frame-ancestors": ["'none'"],
         },
     },
 }));

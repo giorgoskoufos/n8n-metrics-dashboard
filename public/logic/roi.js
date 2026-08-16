@@ -50,7 +50,7 @@ async function loadRoiMetrics() {
         kpiTotalTime.innerText = 'Err';
         if (kpiTotalMoney) kpiTotalMoney.innerText = 'Err';
         kpiExecutions.innerText = 'Err';
-        tableBody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-red-500">Failed to load ROI data. <button onclick="loadRoiMetrics()" class="underline text-red-400 hover:text-white ml-2">Retry</button></td></tr>`;
+        tableBody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-red-500">Failed to load ROI data. <button data-action="loadRoiMetrics" class="underline text-red-400 hover:text-white ml-2">Retry</button></td></tr>`;
     }
 }
 
@@ -80,15 +80,8 @@ function formatTimeExtensive(totalSeconds) {
     return parts.join(' ');
 }
 
-function escapeHtml(unsafe) {
-    if (!unsafe) return '';
-    return String(unsafe)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
+// escapeHtml lives in global_functions.js, loaded before this file.
+
 
 // Helper: Format Currency
 function formatCurrency(amount) {

@@ -13,6 +13,10 @@ Thumbs.db
 tasks.md
 
 docs\antigravity\antigravity_tasks.md
-*.sqlite
+# Matches the replica, its WAL/SHM sidecars, and any dated backup copies
+*.sqlite*
 
 scratch/
+
+TODO-FEATURES.md
+TODO-FIXES.md

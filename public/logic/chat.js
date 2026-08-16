@@ -156,12 +156,4 @@ function scrollToBottom() {
 }
 
 // Helper: XSS Protection
-function escapeHtml(unsafe) {
-    if (!unsafe) return '';
-    return unsafe
-         .replace(/&/g, "&amp;")
-         .replace(/</g, "&lt;")
-         .replace(/>/g, "&gt;")
-         .replace(/"/g, "&quot;")
-         .replace(/'/g, "&#039;");
-}
+// escapeHtml lives in global_functions.js, loaded before this file.

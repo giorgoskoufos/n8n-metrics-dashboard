@@ -28,6 +28,14 @@ function initErrorIntelligence() {
     initCharts();
     setErrorRange(168); // Default: 7 days
 
+    // Delegated so rows carry a data attribute instead of an inline onclick.
+    document.addEventListener('click', (event) => {
+        const row = event.target.closest('[data-group-toggle]');
+        // Ignore clicks on the nested "Inspect" buttons — those open the snapshot.
+        if (!row || event.target.closest('[data-error-exec-id]')) return;
+        toggleGroupDetail(row);
+    });
+
     // Custom date range listeners
     const startInput = document.getElementById('errorRangeStart');
     const endInput = document.getElementById('errorRangeEnd');
@@ -218,7 +226,7 @@ function renderErrorGroups(groups) {
         const lastSeen = formatTimeNice(g.last_seen);
 
         return `
-            <tr class="hover:bg-gray-800/30 transition-colors text-xs border-b border-gray-800/20 cursor-pointer group" onclick="toggleGroupDetail(this)">
+            <tr class="hover:bg-gray-800/30 transition-colors text-xs border-b border-gray-800/20 cursor-pointer group" data-group-toggle>
                 <td class="p-4 text-gray-600 group-hover:text-gray-400 transition-colors"><i class="fa-solid fa-chevron-right text-[10px] transition-transform duration-200"></i></td>
                 <td class="p-4">
                     <span class="inline-flex items-center gap-2">
@@ -236,7 +244,7 @@ function renderErrorGroups(groups) {
                 <td class="p-4 text-right">${statusBadge}</td>
             </tr>
             <tr class="hidden bg-black/20 border-b border-gray-800/20" data-detail-row data-loaded="false"
-                data-category="${g.error_category}" data-node="${escapeHtml(g.node_name)}" data-summary="${escapeHtml(g.error_summary)}">
+                data-category="${escapeHtml(g.error_category)}" data-node="${escapeHtml(g.node_name)}" data-summary="${escapeHtml(g.error_summary)}">
                 <td colspan="7" class="p-4 pl-12">
                     <div class="flex flex-wrap gap-6 text-[11px] text-gray-400">
                         <div><span class="text-gray-600 uppercase font-bold text-[9px] block mb-1">First Seen</span>${firstSeen}</div>
@@ -325,7 +333,7 @@ async function fetchGroupExecutions(detailRow) {
                             <td class="p-3 text-gray-400">${formatTimeNice(ex.timestamp)}</td>
                             <td class="p-3 font-semibold text-gray-300">${escapeHtml(ex.workflow_name)}</td>
                             <td class="p-3 text-right">
-                                <button onclick="window.showErrorSnapshot('${ex.exec_id}')" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded transition-colors text-[10px] font-bold shadow">
+                                <button data-error-exec-id="${escapeHtml(ex.exec_id)}" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded transition-colors text-[10px] font-bold shadow">
                                     <i class="fa-solid fa-magnifying-glass mr-1"></i> Inspect
                                 </button>
                             </td>
@@ -430,7 +438,4 @@ function formatTimeNice(isoStr) {
     return date.toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-function escapeHtml(unsafe) {
-    if (!unsafe) return '';
-    return String(unsafe).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-}
+// escapeHtml now lives in global_functions.js so every page shares one implementation.

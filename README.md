@@ -182,6 +182,10 @@ Create a `.env` file in the root directory:
 DASHBOARD_PORT=3000
 DASHBOARD_JWT_SECRET='your_secure_random_secret'
 
+# Where the local replica is stored. In Docker this MUST point inside a mounted
+# volume. Omit for local development (defaults to ./dashboard.sqlite).
+#DASHBOARD_DB_PATH=/data/dashboard.sqlite
+
 # Main Database (Direct Connection)
 DASHBOARD_DB_USER=postgres
 DASHBOARD_DB_HOST=your_db_host
@@ -208,11 +212,73 @@ SYNC_INTERVAL_MINUTES=5
 ### Docker Installation
 A lightweight `Dockerfile` is included if you prefer running it in an isolated container alongside your n8n stack.
 
+> [!CAUTION]
+> **You must mount a volume at `/data`.** The dashboard's replica holds execution history that n8n has already pruned from PostgreSQL — it cannot be rebuilt from the source database. Without a volume the replica lives inside the container and **every redeploy destroys your entire archive**, resetting you to the last 14 days.
+
 1. Clone the repository.
 2. Ensure your `.env` file is fully configured.
 3. Build the image: `docker build -t n8n-dashboard .`
-4. Run the container: `docker run -d -p 3000:3000 --env-file .env n8n-dashboard`
+4. Create the volume and run:
+   ```bash
+   docker volume create n8n_dashboard_data
+   docker run -d --name n8n-dashboard -p 3000:3000 \
+     --env-file .env \
+     -v n8n_dashboard_data:/data \
+     n8n-dashboard
+   ```
 5. Access the dashboard at `http://localhost:3000`.
+
+#### Docker Compose
+
+```yaml
+services:
+  dashboard:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file: .env
+    environment:
+      DASHBOARD_DB_PATH: /data/dashboard.sqlite
+    volumes:
+      - dashboard_data:/data
+    restart: unless-stopped
+
+volumes:
+  dashboard_data:
+```
+
+#### Easypanel / other PaaS
+
+Add a **Volume** mount before your next deploy:
+
+| Setting | Value |
+|---|---|
+| Type | Volume |
+| Name | `dashboard-data` |
+| Mount path | `/data` |
+
+Then set `DASHBOARD_DB_PATH=/data/dashboard.sqlite` in the service's environment variables. The image already defaults to this path, so the mount alone is enough — but setting it explicitly documents the dependency.
+
+#### Migrating an existing replica into the volume
+
+If you already have a `dashboard.sqlite` with history, copy it in **before** the app starts writing to an empty one:
+
+```bash
+docker cp dashboard.sqlite n8n-dashboard:/data/dashboard.sqlite
+docker restart n8n-dashboard
+```
+
+#### Backups
+
+The replica is the only copy of pruned history. Back it up on a schedule:
+
+```bash
+docker exec n8n-dashboard \
+  sh -c 'sqlite3 /data/dashboard.sqlite ".backup /data/backup.sqlite"' \
+  && docker cp n8n-dashboard:/data/backup.sqlite ./dashboard-$(date +%F).sqlite
+```
+
+Verify any backup before relying on it: `sqlite3 backup.sqlite "PRAGMA integrity_check;"` should return `ok`.
 
 ---
 

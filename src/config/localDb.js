@@ -1,12 +1,22 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const fs = require('fs');
 
-const dbPath = path.resolve(__dirname, '../../dashboard.sqlite');
+// Configurable so the replica can live on a mounted volume instead of inside the
+// container. It holds history that has already been pruned from the n8n Postgres
+// and cannot be rebuilt, so it must survive container replacement.
+const dbPath = process.env.DASHBOARD_DB_PATH
+    ? path.resolve(process.env.DASHBOARD_DB_PATH)
+    : path.resolve(__dirname, '../../dashboard.sqlite');
+
+// A freshly created volume is an empty directory — the parent must exist before opening.
+fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+
 const localDb = new sqlite3.Database(dbPath, (err) => {
     if (err) {
         console.error('Error opening local SQLite database', err.message);
     } else {
-        console.log('Connected to the local SQLite database.');
+        console.log(`Connected to the local SQLite database at ${dbPath}`);
         initDb();
     }
 });

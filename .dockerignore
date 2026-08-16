@@ -1,0 +1,39 @@
+# Most of these are already covered by .gitignore, so a GitHub-sourced build never
+# sees them. This file is the second layer: it also strips things that ARE tracked
+# (.git history, docs screenshots) and protects local `docker build .` runs.
+
+# Secrets — must never reach the image
+.env
+.env.*
+!.env.example
+
+# The replica and its sidecars. Baking a 100 MB database into the image is both a
+# data leak and a size problem; at runtime it lives on the /data volume instead.
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite.backup-*
+
+# Built on the host — often for a different platform than the Alpine image.
+# Copying these in silently breaks the native bcrypt and sqlite3 bindings.
+node_modules
+
+# Repository and CI metadata
+.git
+.gitignore
+.github
+.vscode
+
+# Local-only working directories
+scratch
+relevant
+tmp
+
+# Documentation and screenshots — several MB of PNGs with no runtime purpose
+docs
+*.md
+!README.md
+
+# OS noise
+.DS_Store
+Thumbs.db

@@ -23,15 +23,15 @@
         <!-- Time Range Controls -->
         <div class="flex flex-col sm:flex-row justify-end items-center mb-8 gap-4 w-full">
             <div id="presetRangeContainer" class="flex items-center gap-2">
-                <button id="btn24h" onclick="setErrorRange(24)"
+                <button id="btn24h" data-action="setErrorRange" data-arg="24"
                     class="px-3 py-2 h-[42px] bg-n8n-card border border-gray-800 rounded-lg text-[10px] text-gray-500 font-bold uppercase tracking-widest hover:border-gray-600 hover:text-gray-300 transition-all duration-300">24h</button>
-                <button id="btn48h" onclick="setErrorRange(48)"
+                <button id="btn48h" data-action="setErrorRange" data-arg="48"
                     class="px-3 py-2 h-[42px] bg-n8n-card border border-gray-800 rounded-lg text-[10px] text-gray-500 font-bold uppercase tracking-widest hover:border-gray-600 hover:text-gray-300 transition-all duration-300">48h</button>
-                <button id="btn7d" onclick="setErrorRange(168)"
+                <button id="btn7d" data-action="setErrorRange" data-arg="168"
                     class="px-3 py-2 h-[42px] bg-n8n-card border border-gray-800 rounded-lg text-[10px] text-gray-500 font-bold uppercase tracking-widest hover:border-gray-600 hover:text-gray-300 transition-all duration-300">7d</button>
-                <button id="btn14d" onclick="setErrorRange(336)"
+                <button id="btn14d" data-action="setErrorRange" data-arg="336"
                     class="px-3 py-2 h-[42px] bg-n8n-card border border-gray-800 rounded-lg text-[10px] text-gray-500 font-bold uppercase tracking-widest hover:border-gray-600 hover:text-gray-300 transition-all duration-300">14d</button>
-                <button id="btn30d" onclick="setErrorRange(720)"
+                <button id="btn30d" data-action="setErrorRange" data-arg="720"
                     class="px-3 py-2 h-[42px] bg-n8n-card border border-gray-800 rounded-lg text-[10px] text-gray-500 font-bold uppercase tracking-widest hover:border-gray-600 hover:text-gray-300 transition-all duration-300">30d</button>
             </div>
             <div id="customRangeContainer"
