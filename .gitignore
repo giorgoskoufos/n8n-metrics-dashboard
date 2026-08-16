@@ -1,23 +1,48 @@
+# --- Dependencies ---
 node_modules/
+
+# --- Secrets ---
+# .env.example IS tracked and is the documented template.
+.env
+.env.*
+!.env.example
+
+# --- The analytics replica ---
+# Matches dashboard.sqlite, its -wal/-shm sidecars, dated backups, and .gz archives.
+# This file is production data, not source. It must never enter the repository.
+*.sqlite*
+*.db
+*.db-journal
+
+# --- Local working notes (personal, not part of the project) ---
+# Long-form project documentation lives in documentation/ and IS tracked.
+docs/
+scratch/
 tmp/
 relevant/
-.env
-# Logs
+tasks.md
+TODO-FIXES.md
+TODO-FEATURES.md
+
+# --- Generated / dumped artifacts ---
+custom_logs.dropped.json
+*.dropped.json
+debug_errors/
+*.bak
+*.gz
+*.tar
+*.zip
+
+# --- Logs ---
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-# OS generated files
+pnpm-debug.log*
+
+# --- Editor & OS ---
 .DS_Store
 Thumbs.db
-
-tasks.md
-
-docs\antigravity\antigravity_tasks.md
-# Matches the replica, its WAL/SHM sidecars, and any dated backup copies
-*.sqlite*
-
-scratch/
-
-TODO-FEATURES.md
-TODO-FIXES.md
-custom_logs.dropped.json
+desktop.ini
+*.swp
+.idea/
