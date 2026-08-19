@@ -45,7 +45,8 @@ n8n 2.x does ship insights tables in self-hosted installs, but **how much of tha
 > 1. **Self-hosted n8n only** — the ETL needs direct database access.
 > 2. **PostgreSQL only** — n8n must be configured with Postgres. The default n8n SQLite backend is not supported.
 > 3. **A persistent volume for the replica** — see [Docker installation](#docker-installation). This is the single most common cause of data loss.
-> 4. **Exactly one instance** — see [Scaling constraints](#-scaling-constraints).
+>
+> Running more than one instance is *not* a hard requirement to avoid — the app elects a single ETL writer on its own. See [Running more than one instance](#-running-more-than-one-instance).
 
 > [!WARNING]
 > **Version compatibility**
@@ -156,7 +157,18 @@ Sessions are JWTs signed with `DASHBOARD_JWT_SECRET`. The server refuses to boot
 | `src/routes/` | Endpoint → controller mapping |
 | `src/scripts/optimizeReplica.js` | Offline replica maintenance (dry-run by default, `--apply` to commit) |
 
-**Frontend** — vanilla JS and the standard DOM API, no bundler and no JS build step. Chart.js and marked are loaded from a CDN; DOMPurify is vendored locally under `public/vendor/`. Tailwind CSS v4 **is** compiled — run `npm run build:css` after editing `public/css/input.css` (or `npm run watch:css` while developing).
+**Frontend** — vanilla JS and the standard DOM API, no bundler and no JS build step.
+
+Every third-party asset is served from `public/vendor/`: Chart.js, marked, DOMPurify, Font Awesome and Open Sans. Nothing is fetched from a CDN, so the dashboard renders with no external network access and no origin other than your own can supply script to a page holding an auth token. To upgrade one of them, bump it in `package.json` and re-run:
+
+```bash
+npm install
+node src/scripts/vendorAssets.js   # copies node_modules → public/vendor
+```
+
+The copies are committed on purpose — the Docker build installs dependencies before the source is copied in, so they have to already be in the image.
+
+Tailwind CSS v4 **is** compiled — run `npm run build:css` after editing `public/css/input.css` (or `npm run watch:css` while developing).
 
 **Replica tuning** — on boot the app enables WAL journaling, sets a 5s busy timeout, and creates seven indexes covering the dashboard's access patterns. This is idempotent and costs a few seconds on a fresh database.
 
@@ -213,7 +225,13 @@ OPENAI_API_KEY=sk-proj-your-key-here
 
 # --- ETL ---
 SYNC_INTERVAL_MINUTES=5          # optional, defaults to 5
+#SYNC_ID_OVERLAP=500             # ids re-read each cycle, so late commits are not missed
+#EXECUTION_MISSING_GRACE_MS=3600000  # before a vanished execution is marked 'unknown'
 #SAVE_DEBUG_ERRORS=true          # dumps raw JSON traces to disk for troubleshooting
+
+# --- Multi-instance & shutdown ---
+#ETL_LOCK_TTL_MS=60000           # how long an abandoned ETL lock is honoured
+#SHUTDOWN_TIMEOUT_MS=8000        # must stay below your orchestrator's stop grace period
 ```
 
 ### Standard installation
@@ -274,22 +292,34 @@ Note that the volume is created when the first container starts, not when you sa
 
 ---
 
-## ⚖️ Scaling constraints
+## ⚖️ Running more than one instance
 
-> [!WARNING]
-> **Run exactly one instance. This is an architectural limit, not a tuning preference.**
+The replica is a single SQLite file, and two processes running the ETL against it will corrupt it — *quietly*. During development, `PRAGMA integrity_check` returned `ok` on a file that had silently lost 86% of its rows. The damage was only visible by comparing row counts by hand.
 
-The replica is a single SQLite file and the ETL is a single writer. Two processes pointed at the same file will corrupt it — and they will do so *quietly*: in testing, `PRAGMA integrity_check` returned `ok` on a file that had silently lost 86% of its rows.
+**You do not have to configure anything to be safe from this.** The application enforces a single writer itself:
 
-Practical rules:
+- On startup, and every few seconds after, each instance tries to claim an ETL lock stored **inside the replica**.
+- Exactly one wins. That instance runs the sync.
+- Every other instance serves the dashboard normally and simply never writes. `/api/health/deep` reports `etl.role` as `writer` or `reader`, so you can always tell which is which.
+- If the writer stops cleanly, it hands the lock back and a replacement picks it up immediately. If it is killed outright, the lock expires after `ETL_LOCK_TTL_MS` (default 60s) and another instance takes over on its own.
 
-- Keep the service at **1 replica**. Do not scale horizontally.
-- On **Docker Swarm** (which Easypanel and several PaaS providers use underneath), set the update order to `stop-first`:
+The lock lives in the database file rather than in a lock file or your orchestrator's config, which means it has the correct scope everywhere with nothing to set up: Docker Swarm, Portainer, plain `docker run`, Kubernetes, systemd, or two terminals on a laptop. Processes that can corrupt each other are exactly the processes that share the file — and therefore exactly the processes that can see each other's lock.
+
+A useful consequence: if you want several instances behind a load balancer for read throughput, that already works. One syncs, the rest serve.
+
+### Platform settings (optional)
+
+These no longer prevent corruption — the lock does. They only shorten the window in which a second instance is up and the data is briefly not being refreshed.
+
+- Keep the service at **1 replica** unless you specifically want read scaling.
+- On **Docker Swarm** (used under the hood by Easypanel and several PaaS providers), prefer `stop-first` so the old task is gone before the new one starts:
   ```bash
   docker service update --update-order stop-first <service>
   ```
-  With the default `start-first`, Swarm briefly runs the new and old tasks together — both writing the same file.
-- On Swarm, stop and start **only** with `docker service scale <service>=0` / `=1`. Using `docker stop`/`docker start` leaves an orphan container that Swarm does not manage and that keeps writing to the replica.
+- On Swarm, stop and start with `docker service scale <service>=0` / `=1`. `docker stop`/`docker start` leaves an orphan container that Swarm does not manage.
+
+> [!NOTE]
+> The lock only governs the ETL. Several instances may hold the file open and make small writes (settings, chat history); WAL journaling and `busy_timeout` handle that. It is bulk concurrent writing that destroys the file, and that is what is prevented.
 
 ---
 

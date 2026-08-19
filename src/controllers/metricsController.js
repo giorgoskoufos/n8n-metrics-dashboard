@@ -1,6 +1,7 @@
 const { pool } = require('../config/db');
 const localDb = require('../config/localDb');
 const { parse } = require('flatted');
+const { parseIsoDate, parseDateRange, validateSetting, validateRoiEntry } = require('../utils/validate');
 
 /**
  * Relative time bounds are computed here rather than with SQLite's
@@ -13,27 +14,28 @@ const isoHoursAgo = (hours) => new Date(Date.now() - hours * 3600000).toISOStrin
 
 exports.getMetrics = async (req, res) => {
     try {
-        const targetWorkflow = req.query.workflow; 
-        const startDate = req.query.startDate;
-        const endDate = req.query.endDate;
+        const targetWorkflow = req.query.workflow;
+
+        const range = parseDateRange(req.query.startDate, req.query.endDate);
+        if (!range.ok) return res.status(400).json({ error: range.error });
 
         let startIso, endIso, prevStartIso, prevEndIso;
-        let isCustom = true; 
-        let bucketUnit = 'hour'; 
+        let isCustom = true;
+        let bucketUnit = 'hour';
         let durationMs;
 
-        if (startDate && endDate) {
-            startIso = new Date(startDate).toISOString();
-            endIso = new Date(endDate).toISOString();
-            durationMs = new Date(endDate).getTime() - new Date(startDate).getTime();
+        if (range.start && range.end) {
+            startIso = range.start.toISOString();
+            endIso = range.end.toISOString();
+            durationMs = range.end.getTime() - range.start.getTime();
 
             // Range Cap: 60 days
             const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
             if (durationMs > SIXTY_DAYS_MS) {
                 durationMs = SIXTY_DAYS_MS;
-                startIso = new Date(new Date(endDate).getTime() - SIXTY_DAYS_MS).toISOString();
+                startIso = new Date(range.end.getTime() - SIXTY_DAYS_MS).toISOString();
             }
-            
+
             prevEndIso = startIso;
             prevStartIso = new Date(new Date(startIso).getTime() - durationMs).toISOString();
 
@@ -167,7 +169,7 @@ exports.getMetrics = async (req, res) => {
             const now = new Date();
 
             // Check if the range ends within the current interval
-            const rangeEndMs = isCustom ? new Date(endDate).getTime() : now.getTime();
+            const rangeEndMs = isCustom && range.end ? range.end.getTime() : now.getTime();
             const lastBucketStartMs = new Date(lastRow.time_val).getTime();
             const isLatestBucket = (rangeEndMs > lastBucketStartMs && rangeEndMs <= lastBucketStartMs + stepMs);
 
@@ -365,13 +367,44 @@ exports.getExecutionError = async (req, res) => {
 };
 
 exports.forceSync = async (req, res) => {
-    console.log('[DEBUG] Manual sync triggered from UI burger menu');
     const { syncData } = require('../config/syncJob');
+    console.log(`[SYNC] Manual sync requested by user ${req.user && req.user.id}`);
     try {
-        await syncData(true);
-        res.json({ message: 'Sync Complete' });
-    } catch(err) {
-        console.error('[ERORR] Manual Sync failed:', err);
+        const result = await syncData();
+
+        // Answering 200 here would be a lie: the ETL declined to run because one
+        // was already in flight. 409 lets the caller retry meaningfully instead of
+        // believing it just got fresh data.
+        if (result.status === 'already_running') {
+            return res.status(409).json({
+                status: 'already_running',
+                error: 'A sync is already in progress. Try again in a moment.'
+            });
+        }
+
+        // Another instance owns the ETL. Saying "done" here would be a lie, and
+        // saying "failed" would send someone hunting for a bug that isn't there.
+        if (result.status === 'not_lock_owner') {
+            return res.status(409).json({
+                status: 'not_lock_owner',
+                error: `Another instance is the active writer (${result.owner}). ` +
+                    'This one serves reads only, so it cannot sync on demand.'
+            });
+        }
+
+        if (result.status === 'failed') {
+            return res.status(500).json({ status: 'failed', error: 'Force Sync Failed' });
+        }
+
+        res.json({
+            status: 'ok',
+            message: 'Sync Complete',
+            workflows: result.workflows,
+            executions: result.executions,
+            errors: result.errors
+        });
+    } catch (err) {
+        console.error('[ERROR] Manual Sync failed:', err);
         res.status(500).json({ error: 'Force Sync Failed' });
     }
 };
@@ -431,17 +464,45 @@ exports.getSettings = async (req, res) => {
 };
 
 exports.updateSettings = async (req, res) => {
-    const { settings } = req.body; 
+    const { settings } = req.body;
     if (!settings || !Array.isArray(settings)) return res.status(400).json({ error: 'Invalid settings payload' });
-    
+    if (settings.length > 1000) return res.status(400).json({ error: 'Too many settings in one request.' });
+
+    // Validate the whole payload before writing any of it, so a bad entry at the
+    // end cannot leave the first half applied.
+    const clean = [];
+    for (const s of settings) {
+        const check = validateRoiEntry(s);
+        if (!check.ok) return res.status(400).json({ error: check.error });
+        clean.push(check.value);
+    }
+
+    // workflow_settings has a foreign key to workflow_entity, but it only bites
+    // if PRAGMA foreign_keys is on — which it is, and this turns the resulting
+    // 500 into a message that names the offending workflow.
+    const ids = clean.map(c => c.workflow_id);
+    if (ids.length > 0) {
+        const known = await localDb.query(
+            `SELECT id FROM workflow_entity WHERE id IN (${ids.map(() => '?').join(',')})`,
+            ids
+        );
+        const knownSet = new Set(known.rows.map(r => r.id));
+        const unknown = ids.filter(id => !knownSet.has(id));
+        if (unknown.length > 0) {
+            return res.status(400).json({
+                error: `Unknown workflow id(s): ${unknown.slice(0, 5).join(', ')}`
+            });
+        }
+    }
+
     try {
         await localDb.execute('BEGIN TRANSACTION');
-        for (const s of settings) {
+        for (const s of clean) {
             await localDb.execute(
-                `INSERT INTO workflow_settings (workflow_id, saved_time_seconds, hourly_rate) 
-                 VALUES (?, ?, ?) 
-                 ON CONFLICT(workflow_id) DO UPDATE SET saved_time_seconds=excluded.saved_time_seconds, hourly_rate=excluded.hourly_rate`, 
-                 [s.workflow_id, s.saved_time_seconds, s.hourly_rate || 0]
+                `INSERT INTO workflow_settings (workflow_id, saved_time_seconds, hourly_rate)
+                 VALUES (?, ?, ?)
+                 ON CONFLICT(workflow_id) DO UPDATE SET saved_time_seconds=excluded.saved_time_seconds, hourly_rate=excluded.hourly_rate`,
+                [s.workflow_id, s.saved_time_seconds, s.hourly_rate]
             );
         }
         await localDb.execute('COMMIT');
@@ -525,21 +586,20 @@ exports.getConcurrencyData = async (req, res) => {
         }
 
         // Specific Date behavior: Calculate 288 buckets locally
-        const startTimeMs = new Date(start).getTime();
-        const endTimeMs = new Date(end).getTime();
+        const range = parseDateRange(start, end);
+        if (!range.ok) return res.status(400).json({ error: range.error });
 
-        if (isNaN(startTimeMs) || isNaN(endTimeMs)) {
-            return res.status(400).json({ error: 'Invalid start or end date' });
-        }
+        const startTimeMs = range.start.getTime();
+        const endTimeMs = range.end.getTime();
 
         // Fetch executions started within this entire day window
         const query = `
-            SELECT "startedAt" 
-            FROM execution_entity 
-            WHERE "startedAt" >= ? 
+            SELECT "startedAt"
+            FROM execution_entity
+            WHERE "startedAt" >= ?
               AND "startedAt" <= ?
         `;
-        const execs = await localDb.query(query, [new Date(start).toISOString(), new Date(end).toISOString()]);
+        const execs = await localDb.query(query, [range.start.toISOString(), range.end.toISOString()]);
 
         const execData = execs.rows.map(e => ({
             sAt: new Date(e.startedAt + (e.startedAt.endsWith('Z') ? '' : 'Z')).getTime()
@@ -598,7 +658,9 @@ exports.getGlobalSettings = async (req, res) => {
 
 exports.updateGlobalSettings = async (req, res) => {
     const { key, value } = req.body;
-    if (!key) return res.status(400).json({ error: 'Key is required' });
+
+    const check = validateSetting(key, value);
+    if (!check.ok) return res.status(400).json({ error: check.error });
 
     try {
         await localDb.execute(
@@ -616,12 +678,14 @@ exports.getConcurrencyDetails = async (req, res) => {
     const { time, window: windowMins } = req.query; // time is UTC ISO
     if (!time) return res.status(400).json({ error: 'time parameter is required' });
 
-    const span = parseInt(windowMins) || 5;
+    // Bounded: an unbounded window turns a drill-down into a full-range scan.
+    const span = Math.min(Math.max(parseInt(windowMins, 10) || 5, 1), 24 * 60);
 
-    const windowStartMs = new Date(time).getTime();
-    if (Number.isNaN(windowStartMs)) {
+    const windowStart = parseIsoDate(time);
+    if (!windowStart) {
         return res.status(400).json({ error: 'time must be a valid ISO date' });
     }
+    const windowStartMs = windowStart.getTime();
     // The window end used to be computed inside SQL with a datetime() modifier,
     // which forced a scan. Computing it here keeps the indexed column bare.
     const windowEndIso = new Date(windowStartMs + span * 60000).toISOString();
@@ -659,14 +723,14 @@ exports.getConcurrencyDetails = async (req, res) => {
 
 exports.getErrorIntelligence = async (req, res) => {
     try {
-        const startDate = req.query.startDate;
-        const endDate = req.query.endDate;
+        const range = parseDateRange(req.query.startDate, req.query.endDate);
+        if (!range.ok) return res.status(400).json({ error: range.error });
 
         let startIso, endIso, prevStartIso, prevEndIso;
 
-        if (startDate && endDate) {
-            startIso = new Date(startDate).toISOString();
-            endIso = new Date(endDate).toISOString();
+        if (range.start && range.end) {
+            startIso = range.start.toISOString();
+            endIso = range.end.toISOString();
         } else {
             const now = new Date();
             startIso = new Date(now.getTime() - 7 * 24 * 3600000).toISOString();
@@ -875,10 +939,15 @@ exports.getWorkflowErrorDrilldown = async (req, res) => {
 exports.getErrorGroupExecutions = async (req, res) => {
     try {
         const { category, nodeName, summary, startDate, endDate } = req.body;
-        
+
         if (!category || !nodeName || !summary || !startDate || !endDate) {
             return res.status(400).json({ error: 'Missing required parameters' });
         }
+
+        // These go straight into a timestamp comparison. Unvalidated, a malformed
+        // value simply matched nothing and the empty result read as "no errors".
+        const range = parseDateRange(startDate, endDate);
+        if (!range.ok) return res.status(400).json({ error: range.error });
 
         const query = `
             SELECT a.id as exec_id, a.timestamp, w.name as workflow_name
@@ -892,7 +961,9 @@ exports.getErrorGroupExecutions = async (req, res) => {
             LIMIT 30
         `;
         
-        const result = await localDb.query(query, [startDate, endDate, category, nodeName, summary]);
+        const result = await localDb.query(query, [
+            range.start.toISOString(), range.end.toISOString(), category, nodeName, summary
+        ]);
         res.json({ executions: result.rows });
     } catch (err) {
         console.error('[BACKEND] Error fetching group executions:', err);

@@ -30,4 +30,29 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
-module.exports = { authenticateToken, JWT_SECRET };
+// n8n 2.x role slugs. Anything else ('global:member', project-scoped roles) is
+// treated as unprivileged.
+const ELEVATED_ROLES = new Set(['global:owner', 'global:admin']);
+
+/**
+ * Gate for actions that cost the production n8n instance real work, such as
+ * forcing a full ETL pass.
+ *
+ * Fails OPEN when the role is unknown. n8n 1.x has no roleSlug column, so login
+ * stores null and there is genuinely no way to tell an owner from a member —
+ * denying there would take a working feature away from every user on that
+ * version. The per-user rate limit is what bounds the abuse; this is defence in
+ * depth on top of it, not the only control.
+ */
+const requireElevatedRole = (req, res, next) => {
+    const role = req.user && req.user.role;
+    if (!role) return next();
+    if (ELEVATED_ROLES.has(role)) return next();
+
+    console.warn(`[AUTH] Elevated action refused for role "${role}" (user ${req.user.id})`);
+    return res.status(403).json({
+        error: 'Only n8n owners and admins can trigger this action.'
+    });
+};
+
+module.exports = { authenticateToken, requireElevatedRole, JWT_SECRET };

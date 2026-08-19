@@ -137,9 +137,55 @@ function initDb() {
                 "workflowId" TEXT,
                 status TEXT,
                 "startedAt" DATETIME,
-                "stoppedAt" DATETIME
+                "stoppedAt" DATETIME,
+                -- First cycle in which Postgres stopped returning this row while
+                -- it was still non-terminal. Non-null means "we asked and it was
+                -- gone"; the sync promotes it to status 'unknown' once the grace
+                -- period passes. Without this, a pruned 'running' row stays
+                -- 'running' forever — one sat that way since 16/05/2026.
+                missing_since DATETIME
             )
         `);
+
+        // Migration: add missing_since to replicas created before it existed.
+        localDb.run(`ALTER TABLE execution_entity ADD COLUMN missing_since DATETIME`, (err) => {
+            // Silence the duplicate column error on startup
+        });
+
+        // Work queue for deep error analytics.
+        //
+        // Extraction used to happen only for the ids discovered in the current
+        // cycle: one failure and that execution's detail was lost for good, with
+        // nothing recording that it had been lost. 64 error executions had no
+        // analytics row and nothing would ever have noticed. These columns make
+        // the work outlive the cycle that discovered it.
+        localDb.run(`ALTER TABLE execution_entity ADD COLUMN analytics_status TEXT`, (err) => { });
+        localDb.run(`ALTER TABLE execution_entity ADD COLUMN analytics_attempts INTEGER DEFAULT 0`, (err) => { });
+        localDb.run(`ALTER TABLE execution_entity ADD COLUMN analytics_next_attempt DATETIME`, (err) => { });
+
+        // Partial index: the queue is a handful of rows in a table of half a
+        // million, and only the pending ones are ever queried.
+        localDb.run(`
+            CREATE INDEX IF NOT EXISTS idx_exec_analytics_pending
+            ON execution_entity(analytics_next_attempt, id)
+            WHERE analytics_status = 'pending'
+        `);
+
+        // One-time seed. Every historical error is marked 'done' if its analytics
+        // row exists and 'pending' if it does not, which is what recovers the 64
+        // that were silently dropped. Touches only rows that have never been
+        // marked, so it is a no-op from the second boot onwards.
+        localDb.run(`
+            UPDATE execution_entity
+               SET analytics_status = CASE
+                     WHEN EXISTS (SELECT 1 FROM execution_error_analytics a WHERE a.id = execution_entity.id)
+                     THEN 'done' ELSE 'pending' END
+             WHERE status IN ('error', 'crashed')
+               AND analytics_status IS NULL
+        `, function (err) {
+            if (err) console.error('[DB] Could not seed analytics queue:', err.message);
+            else if (this.changes > 0) console.log(`[DB] Analytics queue seeded for ${this.changes} historical errors.`);
+        });
 
         // Concurrency Stats Table
         localDb.run(`
@@ -156,6 +202,13 @@ function initDb() {
                 value TEXT
             )
         `);
+
+        // NOTE: `instance_lock` is deliberately NOT created here. It is created by
+        // instanceLock.js, which awaits its own schema before the first attempt —
+        // initDb() runs from the open callback and is still in flight when the
+        // first heartbeat fires, so a table defined here would not exist yet.
+        // Keeping one definition, in the file that understands the table, also
+        // means the two cannot drift apart.
 
         // Execution Error Analytics
         localDb.run(`
@@ -174,9 +227,19 @@ function initDb() {
                 metadata TEXT,
                 execution_source TEXT,
                 error_category TEXT DEFAULT 'unknown',
+                -- HTTP status from the n8n error object when there is one. Far more
+                -- reliable than hunting for "429" inside free text, so the classifier
+                -- consults it first. Only populated going forward — it was never
+                -- extracted before, so it stays NULL on historical rows.
+                http_code INTEGER,
                 timestamp DATETIME
             )
         `);
+
+        // Migration: add http_code to replicas created before it existed.
+        localDb.run(`ALTER TABLE execution_error_analytics ADD COLUMN http_code INTEGER`, (err) => {
+            // Silence the duplicate column error on startup
+        });
 
         // Migration: add error_category if it doesn't exist
         localDb.run(`ALTER TABLE execution_error_analytics ADD COLUMN error_category TEXT DEFAULT 'unknown'`, (err) => {
@@ -246,6 +309,32 @@ localDb.executeMany = function (sql, rows) {
                     }
                 });
             }
+        });
+    });
+};
+
+/**
+ * Closes the replica cleanly, checkpointing the WAL first.
+ *
+ * The checkpoint is the part that matters. Under WAL, recent commits live in the
+ * -wal sidecar until something folds them back into the main file. A container
+ * that dies without checkpointing leaves the newest data in a file that is easy
+ * to leave behind when someone copies "the database" — which is exactly how this
+ * replica lost 86% of its rows during the volume migration. TRUNCATE folds the
+ * WAL back and empties it, so after a clean stop dashboard.sqlite is complete on
+ * its own.
+ *
+ * Never rejects: shutdown must continue even if the checkpoint fails.
+ */
+localDb.closeAsync = function () {
+    return new Promise((resolve) => {
+        this.run('PRAGMA wal_checkpoint(TRUNCATE)', (err) => {
+            if (err) console.error('[DB] WAL checkpoint failed:', err.message);
+            this.close((closeErr) => {
+                if (closeErr) console.error('[DB] Error closing replica:', closeErr.message);
+                else console.log('[DB] Replica closed cleanly.');
+                resolve();
+            });
         });
     });
 };
