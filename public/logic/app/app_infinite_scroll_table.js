@@ -20,6 +20,13 @@ window.loadMoreExecutions = async function(reset = false) {
     }
 
     if (executions.length > 0) {
+        // Rows are collected as strings and appended once. `tbody.innerHTML +=`
+        // per row re-serialises the entire table to a string and re-parses it
+        // back into DOM nodes on every iteration — quadratic in the number of
+        // rows already on screen, and infinite scroll only ever adds more. It
+        // also destroys and rebuilds every existing row, which drops any state
+        // the browser held on them.
+        const rows = [];
         executions.forEach(exec => {
             const startStr = window.formatTime(exec.startedAt, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
             const endStr = window.formatTime(exec.stoppedAt, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
@@ -35,7 +42,7 @@ window.loadMoreExecutions = async function(reset = false) {
                 ? `data-error-exec-id="${escapeHtml(exec.exec_id)}" style="cursor: pointer;" title="View Error"`
                 : '';
 
-            tbody.innerHTML += `
+            rows.push(`
                 <tr class="hover:bg-gray-800/30 transition-colors text-sm border-b border-gray-800/50" ${actionAttr}>
                     <td class="p-4 text-gray-500 font-mono">#${escapeHtml(exec.exec_id)}</td>
                     <td class="p-4 text-white">${escapeHtml(exec.name)}</td>
@@ -44,8 +51,11 @@ window.loadMoreExecutions = async function(reset = false) {
                     <td class="p-4 text-n8n-text">${escapeHtml(endStr)}</td>
                     <td class="p-4 text-n8n-text">${escapeHtml(duration)}</td>
                 </tr>
-            `;
+            `);
         });
+        // insertAdjacentHTML rather than `innerHTML +=`: it parses only the new
+        // markup and leaves the rows already in the table untouched.
+        tbody.insertAdjacentHTML('beforeend', rows.join(''));
         currentOffset += LIMIT;
     } else {
         if (trigger) trigger.innerHTML = "No more executions.";
@@ -97,7 +107,7 @@ window.refreshData = async function() {
 }
 
 window.fetchConcurrency = async function(dateVal) {
-    let url = '/api/analytics/concurrency';
+    let url = '/api/analytics/execution-volume';
 
     if (dateVal) {
         // Construct Local 00:00:00 to 23:59:59 times

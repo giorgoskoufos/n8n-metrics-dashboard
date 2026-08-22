@@ -4,11 +4,19 @@
   "description": "Real-time analytics dashboard for self-hosted n8n",
   "author": "Giorgos Koufos",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node src/scripts/testErrorParser.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "node --test --test-concurrency=1 test/unit.test.js test/integration.test.js",
+    "test:unit": "node --test test/unit.test.js",
+    "test:integration": "node --test test/integration.test.js",
+    "check": "npm run lint && npm test",
     "build:css": "npx @tailwindcss/cli -i ./public/css/input.css -o ./public/css/styles.css --minify",
     "watch:css": "npx @tailwindcss/cli -i ./public/css/input.css -o ./public/css/styles.css --watch"
   },
@@ -31,7 +39,9 @@
     "sqlite3": "^6.0.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@tailwindcss/cli": "^4.3.2",
+    "eslint": "^9.39.5",
     "tailwindcss": "^4.3.2"
   }
 }

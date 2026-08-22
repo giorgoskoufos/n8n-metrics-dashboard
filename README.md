@@ -31,7 +31,7 @@ A high-performance analytics dashboard for **self-hosted n8n** instances. It syn
 
 Anyone running their own n8n instance who wants long-horizon analytics without migrating to n8n Cloud or buying an enterprise license.
 
-n8n 2.x does ship insights tables in self-hosted installs, but **how much of that surfaces in the editor UI depends on your license tier**, and n8n prunes execution rows aggressively by default. This dashboard fills both gaps:
+n8n 2.x does ship insights tables in self-hosted installs — `insights_by_period`, `insights_raw` and `insights_metadata` are populated on a plain self-hosted instance (16,758 rows on the one this was built against). What your **license tier** decides is how much of that surfaces in the editor UI; the data is there either way. Separately, n8n prunes execution rows aggressively by default. This dashboard fills both gaps:
 
 - **Long-horizon history.** The local replica keeps rows that n8n has already pruned from PostgreSQL. Once a row is synced, it stays — the archive grows well past your n8n retention window.
 - **Zero load on production.** All analytics and AI queries run against the SQLite replica, not your n8n database.
@@ -116,9 +116,10 @@ When an execution fails, the ETL parses its payload and stores a structured reco
 > [!CAUTION]
 > **`input_data` and `error_stack` can contain production data.** They hold the item that was being processed when the node threw, which may include customer records, tokens, or anything else flowing through the failing workflow. This is what makes the error modal genuinely useful for debugging — and it means the replica is not free of sensitive data.
 >
-> Two consequences:
+> Three consequences:
 > - Treat `dashboard.sqlite` with the same care as your n8n database.
-> - The AI Assistant currently executes any read-only SQL it generates against the replica, so it *can* reach these columns. A column-level allowlist is planned; until then, do not expose the AI chat to users you would not trust with the error modal.
+> - The AI Assistant executes any read-only SQL it generates against the replica, so it *can* reach these columns. A table and column allowlist is planned; until it lands, the assistant is restricted to n8n owners and admins — the roles that can already read every workflow in n8n.
+> - `input_data` is cleared from rows older than 30 days by default, because nothing in the dashboard reads it. `error_stack` is kept, because the classifier re-derives from it. Both are configurable — see [Operating it](#-operating-it).
 
 ### Guarantees that do hold
 
@@ -126,6 +127,8 @@ When an execution fails, the ETL parses its payload and stores a structured reco
 - **No SQL mutation locally.** The AI pipeline rejects anything that is not a `SELECT`/`WITH`, and blocks DML/DDL keywords.
 - **Air-gapped from production.** AI-generated SQL runs against the local SQLite file. Even a malicious query has no route to your Postgres server.
 - **Helmet + strict CSP.** `script-src-attr 'none'`, no `unsafe-inline`, no external `connect-src`. Rendered markdown passes through DOMPurify with a restricted tag allowlist.
+- **Scoped reads.** Every analytics query is narrowed to the workflows the caller's n8n projects own, including the endpoints addressed by id — an execution outside your projects answers 404, the same as one that does not exist.
+- **No secrets in logs.** The logger redacts credential-shaped keys at any depth before writing.
 
 ---
 
@@ -140,6 +143,22 @@ The dashboard has no user management of its own — it authenticates directly ag
 
 Sessions are JWTs signed with `DASHBOARD_JWT_SECRET`. The server refuses to boot if that secret is shorter than 32 characters.
 
+### Who sees what
+
+Authentication says *whether* you get in. Authorization decides *what you then see*, and it mirrors n8n's own model rather than inventing one: a workflow belongs to a project, a user belongs to a project.
+
+| n8n role | What the dashboard shows |
+|---|---|
+| `global:owner`, `global:admin` | Everything. These roles can open any workflow in n8n, so scoping them here would report fewer executions than the instance actually ran — which reads as data loss, not as security. |
+| Any other role | Only workflows in the projects that user belongs to. Executions, errors, ROI and volume all hang off a workflow id, so all of them narrow together. |
+
+Two consequences worth knowing before you add a second user:
+
+- **Instance-wide settings and forced syncs are owner/admin only.** Both change something for everybody.
+- **The AI Assistant is owner/admin only for now.** It answers by running SQL it wrote itself, and a filter cannot be safely bolted onto a query a model composed — one subquery steps around it. Scoped users get an explanatory 403 rather than an answer computed over everyone's data. This lifts once the table allowlist lands.
+
+Membership is re-mirrored on every sync, wholesale rather than incrementally. That matters: removing someone from a project in n8n is expressed by the row *disappearing*, and a sync that only ever inserts and updates could never observe a disappearance — the revoked user would keep their access here forever.
+
 ---
 
 ## 🖥️ Stack
@@ -149,13 +168,20 @@ Sessions are JWTs signed with `DASHBOARD_JWT_SECRET`. The server refuses to boot
 | Path | Role |
 |---|---|
 | `src/config/db.js` | PostgreSQL connection pool (n8n source) |
-| `src/config/localDb.js` | SQLite replica: schema, pragmas, indexes, batch helpers |
+| `src/config/localDb.js` | SQLite replica: connection, pragmas, migration runner, batch helpers |
+| `src/config/schema.js` | The schema as data — migrations, indexes, and which n8n columns are mirrored |
 | `src/config/syncJob.js` | The ETL and the error classification engine |
+| `src/config/instanceLock.js` | Single-writer election for the ETL, stored in the replica itself |
+| `src/config/errorParser.js` | Error classification rules — pure, no I/O, unit-tested |
 | `src/config/openai.js` | OpenAI client initialization |
 | `src/controllers/` | Analytics, auth, and AI business logic |
-| `src/middlewares/` | `auth.js` (JWT verification), `rateLimiter.js` |
+| `src/middlewares/` | `auth.js` (JWT + scope), `rateLimiter.js`, `sqliteRateStore.js`, `requestLog.js` |
+| `src/utils/scope.js` | Which workflows a user may see |
+| `src/utils/validate.js` | Input validation shared by the controllers |
+| `src/utils/logger.js` | Levelled, redacting, JSON-or-pretty logger |
 | `src/routes/` | Endpoint → controller mapping |
 | `src/scripts/optimizeReplica.js` | Offline replica maintenance (dry-run by default, `--apply` to commit) |
+| `test/` | `node --test` suites — unit, plus an integration run that boots the real server |
 
 **Frontend** — vanilla JS and the standard DOM API, no bundler and no JS build step.
 
@@ -170,7 +196,15 @@ The copies are committed on purpose — the Docker build installs dependencies b
 
 Tailwind CSS v4 **is** compiled — run `npm run build:css` after editing `public/css/input.css` (or `npm run watch:css` while developing).
 
-**Replica tuning** — on boot the app enables WAL journaling, sets a 5s busy timeout, and creates seven indexes covering the dashboard's access patterns. This is idempotent and costs a few seconds on a fresh database.
+**Schema** — applied by an ordered set of migrations recorded in `schema_migrations`, each in its own transaction. They are idempotent, so an existing replica upgrades in place, and a migration that fails stops the process rather than leaving the schema in a state nobody has described. On boot the app also enables WAL journaling, sets a 5s busy timeout, and creates the indexes covering the dashboard's access patterns.
+
+**The server does not accept connections until the migrations have finished.** A container that has not bound its port is not ready, which is exactly what an orchestrator should see.
+
+**What is mirrored** — n8n's `execution_entity` has nineteen columns. The replica takes fourteen of them: the four this dashboard started with, plus trigger mode, creation time, wait-until, finished, the two retry columns, the JSON and binary payload sizes, and the workflow version that ran. From `workflow_entity` it also takes archived state, parent folder, created/updated, trigger count and description. Which columns are read is decided at runtime from `information_schema`, so an instance a version or two behind gets fewer columns rather than a failing ETL.
+
+Two are left out on purpose. `deletedAt` would always be NULL here, because the fetch already filters soft-deleted rows out — a column that can only ever hold one value reads like an answer. `storedAt`, `deduplicationKey`, `tracingContext` and `usedPrivateCredentials` have no consumer; mirroring a column costs a write on every row forever, so each has to earn it.
+
+**Catching up** — a replica that predates those columns fills them in from Postgres over the next few sync cycles, oldest first, time-boxed so no single cycle stalls. Executions n8n has already pruned keep NULLs, which is the truthful answer rather than a guess. On the 500,000-row replica this was built against, 98,000 rows still existed upstream and the whole pass took about 35 seconds; the remaining 405,000 are history only this database still has.
 
 ---
 
@@ -184,13 +218,16 @@ A three-step text-to-SQL pipeline:
 
 The generated SQL is shown alongside every answer, so you can always check what was actually asked. Requires `OPENAI_API_KEY`; the rest of the dashboard works without it.
 
+> [!IMPORTANT]
+> **Available to n8n owners and admins only.** The pipeline runs SQL the model composed, over the whole replica — including the raw error columns described under [Security & data privacy](#-security--data-privacy). Restricting it to the roles that can already see every workflow in n8n is the honest position until a table and column allowlist replaces free-form SQL. Everyone else receives a 403 that says so.
+
 ---
 
 ## 🛠️ Installation
 
 ### Prerequisites
 
-- **Node.js 18+** (the Docker image uses `node:18-alpine`)
+- **Node.js 20+** (the Docker image uses `node:22-alpine`; Node 18 is end-of-life and no longer receives security patches)
 - **PostgreSQL access** to your n8n database — read-only credentials are enough; the dashboard never writes to it
 - **OpenAI API key** — only if you want the AI Assistant
 
@@ -232,6 +269,30 @@ SYNC_INTERVAL_MINUTES=5          # optional, defaults to 5
 # --- Multi-instance & shutdown ---
 #ETL_LOCK_TTL_MS=60000           # how long an abandoned ETL lock is honoured
 #SHUTDOWN_TIMEOUT_MS=8000        # must stay below your orchestrator's stop grace period
+
+# --- Error analytics queue ---
+#ERROR_BATCH_LIMIT=500           # max queue entries drained per cycle
+#ERROR_CHUNK_SIZE=50             # execution ids per payload query
+#MAX_ERROR_PAYLOAD_BYTES=5242880 # traces larger than this are skipped, not loaded
+#MAX_ANALYTICS_ATTEMPTS=5        # retries before an execution is parked as failed
+
+# --- Retention --- (see "Operating it": the row is always kept, only the heavy
+# columns are cleared. 0 means keep forever.)
+#ERROR_DETAIL_RETENTION_DAYS=30  # clears input_data; nothing in the app reads it
+#ERROR_STACK_RETENTION_DAYS=0    # keep: reclassification re-derives from it
+
+# --- Logging ---
+#LOG_LEVEL=info                  # error | warn | info | debug
+#LOG_FORMAT=json                 # json | pretty (default: pretty on a TTY)
+#SLOW_REQUEST_MS=2000            # requests above this are logged at warn
+#SYNC_RUN_HISTORY=500            # rows kept in sync_runs
+
+# --- Limits ---
+#API_RATE_LIMIT_PER_MINUTE=300   # ceiling per user across /api
+
+# --- Postgres timeouts ---
+#DASHBOARD_DB_STATEMENT_TIMEOUT_MS=60000
+#DASHBOARD_DB_CONNECT_TIMEOUT_MS=15000
 ```
 
 ### Standard installation
@@ -256,6 +317,16 @@ docker run -d --name n8n-dashboard -p 3000:3000 \
   -v n8n_dashboard_data:/data \
   n8n-dashboard
 ```
+
+> [!WARNING]
+> **Upgrading a deployment created before the container ran unprivileged.**
+> The image now runs as the `node` user (uid 1000) instead of root. Docker applies the image's ownership only to a volume it creates **empty** — a volume that already exists is left exactly as it was, so one written by an older root container stays root-owned and the new container cannot open its own database. Run this once, before deploying:
+>
+> ```bash
+> docker run --rm -v n8n_dashboard_data:/data alpine chown -R 1000:1000 /data
+> ```
+>
+> If you forget, nothing is damaged: the app refuses to start and prints that exact command.
 
 #### Docker Compose
 
@@ -320,6 +391,61 @@ These no longer prevent corruption — the lock does. They only shorten the wind
 
 > [!NOTE]
 > The lock only governs the ETL. Several instances may hold the file open and make small writes (settings, chat history); WAL journaling and `busy_timeout` handle that. It is bulk concurrent writing that destroys the file, and that is what is prevented.
+
+---
+
+## 🧰 Operating it
+
+### Logs
+
+Levelled and structured. `LOG_LEVEL` is `error | warn | info | debug` (default `info`), and the format defaults to human-readable on a terminal and JSON everywhere else, so a developer and a log shipper each get what they need without configuring anything.
+
+```
+INFO  [SYNC] Synced 163 workflows.
+INFO  [HTTP] GET /api/analytics/metrics 200 id=8f2a1c04 method=GET status=200 ms=41 user=…
+```
+
+Every `/api/*` response carries an `X-Request-Id`, echoed from the caller's own header when it sends one. Paste it into a log search to get that request and everything it caused. Values for keys that look like credentials — `password`, `token`, `authorization`, `apiKey`, `*_secret` — are replaced with `[redacted]` before anything is written, at any nesting depth.
+
+### Sync history
+
+Every ETL pass writes a row to `sync_runs`: duration, rows read, executions changed, errors extracted, retention effects, and the size of the replica. The last 500 are kept. It is the quickest answer to "when did this last succeed" and "is it getting slower":
+
+```sql
+SELECT started_at, status, duration_ms, executions, replica_bytes/1048576 AS mb
+FROM sync_runs ORDER BY id DESC LIMIT 20;
+```
+
+### Rate limits
+
+| What | Limit | Keyed on |
+|---|---|---|
+| Failed logins, one account | 10 / 15 min | source address + email |
+| Failed logins, one source | 30 / 15 min | source address |
+| AI chat | 5 / min | user |
+| Forced sync | 2 / min | user |
+| Everything else under `/api` | 300 / min (`API_RATE_LIMIT_PER_MINUTE`) | user, falling back to address |
+
+The login, AI and sync counters live in the replica, so a restart, a rolling deploy or a second instance does not hand a caller a fresh allowance. The per-account login limit includes the source address deliberately: keyed on the email alone, anyone who knows your address could lock you out of your own dashboard by failing ten logins.
+
+### Retention
+
+The error analytics row is never deleted — every count, category and chart keeps working. Only the raw evidence behind old rows is cleared, and the two heavy columns are governed separately because they are not the same kind of data:
+
+- `input_data` is the payload that entered the failing node. Nothing in the dashboard reads it, so it is cleared after `ERROR_DETAIL_RETENTION_DAYS` (default 30).
+- `error_stack` is kept forever by default. When the classifier's rules improve, the message and category of every stored error are re-derived **from it**; clearing it means those rows can never be corrected. Set `ERROR_STACK_RETENTION_DAYS` only if you have decided that trade is worth the disk.
+
+Clearing a column frees pages for reuse, so the file stops growing — it does not shrink. To reclaim the space, run `node src/scripts/optimizeReplica.js --apply` with the app stopped.
+
+### Tests and linting
+
+```bash
+npm run lint     # eslint
+npm test         # node --test: unit + integration
+npm run check    # both, the same gate CI applies before deploying
+```
+
+The integration suite boots the real server against a temporary SQLite file and calls every endpoint. It needs no PostgreSQL and no n8n instance, deliberately — a test that cannot run in CI does not run at all. Pushing to `main` runs lint and tests first; the deploy webhook is only called if they pass.
 
 ---
 

@@ -4,8 +4,11 @@
 
 require('dotenv').config();
 const express = require('express');
+const http = require('http');
 const helmet = require('helmet');
 const path = require('path');
+const log = require('./src/utils/logger').logger('SERVER');
+const { requestLog } = require('./src/middlewares/requestLog');
 
 // Route Imports
 const authRoutes = require('./src/routes/authRoutes');
@@ -62,6 +65,12 @@ app.use(helmet({
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '100kb' }));
 
+// Mounted below express.static and above the routers: static assets are noise in
+// a request log, while everything under /api is worth a line. It has to come
+// before the routers so the response hooks are attached before a handler can
+// answer.
+app.use('/api', requestLog);
+
 // Main Routes
 app.use('/api', authRoutes);
 app.use('/api', metricsRoutes);
@@ -107,7 +116,7 @@ async function isReady() {
             await pool.query('SELECT 1');
             ok = true;
         } catch (err) {
-            console.error('[HEALTH] Readiness probe failed:', err.message);
+            log.error('Readiness probe failed:', err.message);
         }
         readiness = { checkedAt: Date.now(), ok };
         readinessInFlight = null;
@@ -169,7 +178,7 @@ app.use((err, req, res, next) => {
         return res.status(413).json({ error: 'Request body is too large.' });
     }
 
-    console.error(`[ERROR] Unhandled failure on ${req.method} ${req.originalUrl}:`, err);
+    log.error(`Unhandled failure on ${req.method} ${req.originalUrl}:`, err);
 
     // Already streaming a response: the only correct move is to let the default
     // handler tear the connection down, since headers cannot be rewritten.
@@ -195,22 +204,41 @@ const syncTask = cron.schedule(`*/${syncInterval} * * * *`, () => {
 
 // Run an initial sync on boot. The handle is kept so a shutdown arriving inside
 // this window cancels it instead of starting an ETL pass on the way out.
-const bootSyncTimer = setTimeout(() => {
-    syncData();
-}, 2000);
+//
+// SKIP_BOOT_SYNC exists for the integration tests, which boot the app against a
+// temporary replica and no Postgres at all. Without it every test run waits out
+// the connection timeout before the first assertion.
+const bootSyncTimer = process.env.SKIP_BOOT_SYNC === '1'
+    ? null
+    : setTimeout(() => { syncData(); }, 2000);
 
-// Server Initialization
-const server = app.listen(port, () => {
-    console.log(`🚀 n8n Analytics Dashboard modularized and listening at http://localhost:${port}`);
-    console.log(`📡 Press Ctrl+C to stop the server`);
+// Server Initialization.
+//
+// The socket is created now so the shutdown handler and the error handler below
+// always have something to attach to, but it does not start listening until the
+// schema migrations have finished. The migrations await between statements, so
+// unlike the old synchronous block they no longer implicitly queue ahead of
+// everything else on the connection — a request served in that window would
+// query a table that does not exist yet. On a fresh database that is the
+// difference between a working first boot and a page of 500s.
+//
+// Not listening is also the honest signal: a container that has not bound its
+// port is not ready, which is exactly what an orchestrator should see.
+const server = http.createServer(app);
+
+localDb.ready.then(() => {
+    server.listen(port, () => {
+        log.info(`🚀 n8n Analytics Dashboard modularized and listening at http://localhost:${port}`);
+        log.info(`📡 Press Ctrl+C to stop the server`);
+    });
 });
 
 // Error Handling for the Server
 server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
-        console.error(`❌ Error: Port ${port} is already in use. Please kill the existing process or change DASHBOARD_PORT in your .env file.`);
+        log.error(`❌ Error: Port ${port} is already in use. Please kill the existing process or change DASHBOARD_PORT in your .env file.`);
     } else {
-        console.error('❌ Server error:', err);
+        log.error('❌ Server error:', err);
     }
     process.exit(1);
 });
@@ -232,11 +260,11 @@ let shuttingDown = false;
 function withTimeout(promise, ms, label) {
     return Promise.race([
         Promise.resolve(promise).catch((err) => {
-            console.error(`[SHUTDOWN] ${label} failed:`, err.message);
+            log.error(`${label} failed:`, err.message);
         }),
         new Promise((resolve) => {
             const t = setTimeout(() => {
-                console.warn(`[SHUTDOWN] ${label} did not finish in ${ms}ms — abandoning it.`);
+                log.warn(`${label} did not finish in ${ms}ms — abandoning it.`);
                 resolve();
             }, ms);
             if (t.unref) t.unref();
@@ -248,35 +276,35 @@ async function shutdown(signal, exitCode = 0) {
     // A second Ctrl+C, or SIGTERM followed by SIGINT, must not start a parallel
     // teardown that closes the database under the first one.
     if (shuttingDown) {
-        console.log(`[SHUTDOWN] ${signal} ignored — already shutting down.`);
+        log.info(`${signal} ignored — already shutting down.`);
         return;
     }
     shuttingDown = true;
-    console.log(`\n[SHUTDOWN] ${signal} received. Draining…`);
+    log.info(`${signal} received. Draining…`);
 
     // Hard backstop: if any step below hangs, exit anyway rather than wait for
     // the SIGKILL, which would defeat the entire purpose.
     const guard = setTimeout(() => {
-        console.error('[SHUTDOWN] Deadline exceeded — forcing exit.');
+        log.error('Deadline exceeded — forcing exit.');
         process.exit(1);
     }, SHUTDOWN_DEADLINE_MS);
     guard.unref();
 
     try {
         // 1. Stop scheduling new work first, so nothing starts while we drain.
-        clearTimeout(bootSyncTimer);
+        if (bootSyncTimer) clearTimeout(bootSyncTimer);
         if (syncTask) (syncTask.destroy || syncTask.stop).call(syncTask);
-        console.log('[SHUTDOWN] Cron stopped.');
+        log.info('Cron stopped.');
 
         // 2. Stop accepting connections. In-flight requests keep their sockets.
-        await new Promise((resolve) => server.close(resolve));
+        await new Promise((resolve) => { server.close(resolve); });
         if (server.closeIdleConnections) server.closeIdleConnections();
-        console.log('[SHUTDOWN] HTTP server closed.');
+        log.info('HTTP server closed.');
 
         // 3. Let the ETL finish its transaction. This is the step that protects
         //    the replica; everything else is tidiness.
         const idle = await waitForIdle(SHUTDOWN_DEADLINE_MS - 2000);
-        console.log(idle
+        log.info(idle
             ? '[SHUTDOWN] ETL idle.'
             : '[SHUTDOWN] ETL still running at deadline — closing anyway, SQLite will roll back.');
 
@@ -295,13 +323,13 @@ async function shutdown(signal, exitCode = 0) {
         //    shutdown into a forced exit and report failure for work that
         //    actually succeeded.
         await withTimeout(pool.end(), 1500, 'Postgres pool drain');
-        console.log('[SHUTDOWN] Postgres pool released.');
+        log.info('Postgres pool released.');
 
         clearTimeout(guard);
-        console.log('✅ Stopped cleanly.');
+        log.info('✅ Stopped cleanly.');
         process.exit(exitCode);
     } catch (err) {
-        console.error('[SHUTDOWN] Error while shutting down:', err);
+        log.error('Error while shutting down:', err);
         process.exit(1);
     }
 }
@@ -313,13 +341,13 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 // on this app means an abrupt kill during an ETL write. Keep the crash semantics
 // (masking these would hide real bugs) but route it through the drain above.
 process.on('unhandledRejection', (reason) => {
-    console.error('[FATAL] Unhandled promise rejection:', reason);
+    log.error('Unhandled promise rejection:', reason);
     shutdown('unhandledRejection', 1);
 });
 
 // After an uncaught exception the process state is untrustworthy, so this only
 // tries to close the database — it does not attempt to keep serving.
 process.on('uncaughtException', (err) => {
-    console.error('[FATAL] Uncaught exception:', err);
+    log.error('Uncaught exception:', err);
     shutdown('uncaughtException', 1);
 });

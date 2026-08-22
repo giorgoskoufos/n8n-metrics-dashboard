@@ -34,7 +34,12 @@ window.fetchWithAuth = async (url, options = {}) => {
 
     const response = await fetch(url, { ...options, headers });
 
-    if (response.status === 401 || response.status === 403) {
+    // 401 only. A 403 means the token is fine and this user simply may not do
+    // this — an n8n member asking the dashboard to force a sync, say. Treating it
+    // as an expired session logged them out mid-click and lost the explanation
+    // the server had just sent; the response is returned instead, so the caller
+    // can show it.
+    if (response.status === 401) {
         if (!isRedirecting) {
             isRedirecting = true;
             console.warn("[AUTH] Session expired or invalid token.");

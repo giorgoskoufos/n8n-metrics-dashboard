@@ -40,17 +40,19 @@ window.switchTab = async function(tabName) {
         const res = await fetchWithAuth('/api/analytics/slowest');
         const data = await res.json();
         if (tbody) {
-            tbody.innerHTML = '';
-            data.forEach(row => {
+            // Built once, assigned once. Only ten rows land here, so the cost is
+            // not the point — leaving `innerHTML +=` in the file is, because it is
+            // the pattern the next table gets copied from.
+            tbody.innerHTML = data.map(row => {
                 const avgTime = parseFloat(row.avg_duration).toFixed(3) + 's';
-                tbody.innerHTML += `
+                return `
                     <tr class="hover:bg-gray-800/30 transition-colors text-sm border-b border-gray-800/50">
                         <td class="p-4 text-white">${escapeHtml(row.name)}</td>
                         <td class="p-4 text-orange-400 font-mono">${escapeHtml(avgTime)}</td>
                         <td class="p-4 text-n8n-text">${parseInt(row.total_runs).toLocaleString()}</td>
                     </tr>
                 `;
-            });
+            }).join('');
         }
 
     } else if (tabName === 'errors') {
@@ -67,12 +69,11 @@ window.switchTab = async function(tabName) {
         const res = await fetchWithAuth('/api/analytics/errors');
         const data = await res.json();
         if (tbody) {
-            tbody.innerHTML = '';
-            data.forEach(row => {
+            tbody.innerHTML = data.map(row => {
                 const errCount = parseInt(row.error_count);
                 const totalRuns = parseInt(row.total_runs);
                 const rate = ((errCount / totalRuns) * 100).toFixed(1) + '%';
-                tbody.innerHTML += `
+                return `
                     <tr class="hover:bg-gray-800/30 transition-colors text-sm border-b border-gray-800/50">
                         <td class="p-4 text-white">${escapeHtml(row.name)}</td>
                         <td class="p-4 text-n8n-danger font-bold">${errCount.toLocaleString()}</td>
@@ -80,7 +81,7 @@ window.switchTab = async function(tabName) {
                         <td class="p-4 text-n8n-text">${rate}</td>
                     </tr>
                 `;
-            });
+            }).join('');
         }
     }
 }

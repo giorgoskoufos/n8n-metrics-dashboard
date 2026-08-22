@@ -4,7 +4,12 @@ const fs = require('fs');
 const path = require('path');
 const { parse } = require('flatted');
 const { resolveError, extractHttpCode, CLASSIFIER_VERSION } = require('./errorParser');
+const {
+    EXECUTION_MIRROR_COLUMNS, WORKFLOW_MIRROR_COLUMNS, TRANSIENT_INDEXES, mirrorPlan, toSqlite
+} = require('./schema');
 const instanceLock = require('./instanceLock');
+const { invalidateScopeCache } = require('../utils/scope');
+const log = require('../utils/logger').logger('SYNC');
 
 let isSyncing = false;
 
@@ -73,34 +78,45 @@ function formatBytes(n) {
     return `${n} bytes`;
 }
 
-// n8n's execution_entity has changed shape across major versions — soft deletes
-// (deletedAt) arrived in 1.x. Probe once and build the filter from the columns
-// that actually exist, the same way authController handles the user table, so
-// the sync keeps working on older instances instead of failing on every cycle.
-let execColumnsPromise = null;
-function getExecutionColumns() {
-    if (!execColumnsPromise) {
-        execColumnsPromise = pool
-            .query(
-                `SELECT column_name FROM information_schema.columns
-                  WHERE table_schema = 'public' AND table_name = 'execution_entity'`
-            )
-            .then((r) => new Set(r.rows.map((x) => x.column_name)))
-            .catch((err) => {
-                console.error('[SYNC] Could not read execution_entity columns:', err.message);
-                execColumnsPromise = null;   // retry on the next cycle
-                return new Set();
-            });
+// n8n's schema has changed shape across major versions: soft deletes (deletedAt)
+// arrived in 1.x, payload sizes and workflowVersionId in 2.x, projects somewhere
+// between. Probe each table once and build every statement from the columns that
+// actually exist, the same way authController handles the user table.
+//
+// This is not defensive decoration. A SELECT that names one column the source
+// does not have fails the whole cycle, not just that field — so an instance one
+// minor version behind would get no executions at all rather than fifteen
+// columns instead of nineteen.
+const columnCache = new Map();
+function getTableColumns(table) {
+    if (!columnCache.has(table)) {
+        columnCache.set(
+            table,
+            pool
+                .query(
+                    `SELECT column_name FROM information_schema.columns
+                      WHERE table_schema = 'public' AND table_name = $1`,
+                    [table]
+                )
+                .then((r) => new Set(r.rows.map((x) => x.column_name)))
+                .catch((err) => {
+                    log.error(`Could not read ${table} columns:`, err.message);
+                    columnCache.delete(table);   // retry on the next cycle
+                    return new Set();
+                })
+        );
     }
-    return execColumnsPromise;
+    return columnCache.get(table);
 }
+
+const getExecutionColumns = () => getTableColumns('execution_entity');
 
 // Returns a result object rather than nothing, because the caller cannot
 // otherwise tell "synced" from "silently skipped" — /api/sync/force used to
 // answer "Sync Complete" to a request that did no work at all.
 async function syncData() {
     if (isSyncing) {
-        console.log('[SYNC] Sync already running. Skipping concurrent request.');
+        log.info('Sync already running. Skipping concurrent request.');
         return { status: 'already_running' };
     }
 
@@ -113,20 +129,45 @@ async function syncData() {
     }
 
     isSyncing = true;
-    console.log('[SYNC] Starting ETL Sync...');
+    const runStartedAt = new Date();
+    const runStartedHr = process.hrtime.bigint();
+    log.info('Starting ETL Sync...');
     try {
+        // The schema is applied asynchronously now, and the boot sync fires two
+        // seconds in. On a fresh database that is a race the ETL would lose.
+        await localDb.ready;
+
         // 1. Sync Workflows (Full Sync for active/names is lightweight enough)
-        const workflows = await pool.query('SELECT id, name, active FROM workflow_entity');
+        const wfPlan = mirrorPlan(await getTableColumns('workflow_entity'), WORKFLOW_MIRROR_COLUMNS);
+        const workflows = await pool.query(
+            `SELECT id, name, active${wfPlan.select} FROM workflow_entity`
+        );
         await localDb.execute('BEGIN TRANSACTION');
         await localDb.executeMany(
-            `INSERT INTO workflow_entity (id, name, active) VALUES (?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET name=excluded.name, active=excluded.active`,
-            workflows.rows.map(w => [w.id, w.name, w.active])
+            `INSERT INTO workflow_entity (id, name, active${wfPlan.select})
+             VALUES (?, ?, ?${wfPlan.placeholders})
+             ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name, active = excluded.active${wfPlan.upsert}`,
+            workflows.rows.map(w => [w.id, w.name, toSqlite(w.active), ...wfPlan.values(w)])
         );
         await localDb.execute('COMMIT');
-        console.log(`[SYNC] Synced ${workflows.rows.length} workflows.`);
+        log.info(`Synced ${workflows.rows.length} workflows.`);
+
+        // 1b. Sync who may see what. Runs right after the workflows so the ids it
+        //     references already exist locally. Never throws: a dashboard that
+        //     cannot refresh membership should keep serving the last known one,
+        //     not stop syncing executions.
+        await syncAuthorization();
 
         // 2. Sync Executions
+        //
+        // Which of the mirrored columns this source has is settled once, here,
+        // and then used by every phase below. Resolved before Phase A because
+        // Phase A needs it too: the non-terminal refresh reads the same columns
+        // the fetch does.
+        const execColumns = await getExecutionColumns();
+        const execPlan = mirrorPlan(execColumns, EXECUTION_MIRROR_COLUMNS);
+
         // PHASE A: Re-check every execution that has not reached a terminal state.
         //
         // This used to look at status='running' only, so rows stuck at 'new' or
@@ -140,11 +181,17 @@ async function syncData() {
 
         if (openExecs.rows.length > 0) {
             const openIds = openExecs.rows.map(r => r.id);
-            console.log(`[SYNC] Re-checking status for ${openIds.length} non-terminal executions...`);
+            log.info(`Re-checking status for ${openIds.length} non-terminal executions...`);
 
-            // Query Postgres for the current state of these specific executions
+            // Query Postgres for the current state of these specific executions.
+            // The mirrored columns come along too: finished, waitTill,
+            // retrySuccessId and the payload sizes are precisely the fields that
+            // move while an execution is still open, so refreshing status alone
+            // would leave them frozen at whatever they were when the row first
+            // appeared.
             const updatedExecs = await pool.query(
-                `SELECT id, status, "startedAt", "stoppedAt" FROM execution_entity WHERE id = ANY($1)`,
+                `SELECT id, status, "startedAt", "stoppedAt"${execPlan.select}
+                   FROM execution_entity WHERE id = ANY($1)`,
                 [openIds]
             );
 
@@ -164,12 +211,14 @@ async function syncData() {
                     // execution to 'unknown'.
                     await localDb.execute(
                         `UPDATE execution_entity
-                            SET status = ?, "startedAt" = COALESCE("startedAt", ?), "stoppedAt" = ?, missing_since = NULL
+                            SET status = ?, "startedAt" = COALESCE("startedAt", ?), "stoppedAt" = ?,
+                                missing_since = NULL${execPlan.assign}
                           WHERE id = ?`,
                         [
                             e.status,
                             e.startedAt ? e.startedAt.toISOString() : null,
                             e.stoppedAt ? e.stoppedAt.toISOString() : null,
+                            ...execPlan.values(e),
                             e.id
                         ]
                     );
@@ -193,8 +242,8 @@ async function syncData() {
                         "UPDATE execution_entity SET status = 'unknown' WHERE id = ?",
                         [local.id]
                     );
-                    console.warn(
-                        `[SYNC] Execution ${local.id} has been absent from Postgres since ` +
+                    log.warn(
+                        `Execution ${local.id} has been absent from Postgres since ` +
                         `${local.missing_since} — marking 'unknown'.`
                     );
                 }
@@ -204,7 +253,7 @@ async function syncData() {
         }
 
         // PHASE B: Incremental Sync for new executions
-        let lastIdObj = await localDb.query('SELECT MAX(id) as max_id FROM execution_entity');
+        const lastIdObj = await localDb.query('SELECT MAX(id) as max_id FROM execution_entity');
         let lastId = lastIdObj.rows[0].max_id;
 
         // Clamp the watermark to what Postgres actually has.
@@ -220,8 +269,8 @@ async function syncData() {
             const pgMaxRes = await pool.query('SELECT MAX(id) AS max_id FROM execution_entity');
             const pgMax = pgMaxRes.rows[0].max_id;
             if (pgMax !== null && pgMax < lastId) {
-                console.warn(
-                    `[SYNC] Replica high-water id ${lastId} is beyond the source maximum ${pgMax}. ` +
+                log.warn(
+                    `Replica high-water id ${lastId} is beyond the source maximum ${pgMax}. ` +
                     'Clamping — a stray id would otherwise stall the sync indefinitely.'
                 );
                 lastId = pgMax;
@@ -234,14 +283,13 @@ async function syncData() {
         // Skip executions the user deleted in n8n. Only applied on fetch: rows
         // already in the replica are kept, because retaining history that n8n no
         // longer has is the entire point of this database.
-        const execColumns = await getExecutionColumns();
         const notDeleted = execColumns.has('deletedAt') ? 'AND "deletedAt" IS NULL' : '';
 
         if (!lastId) {
             // First time boot sync (last 14 days)
-            console.log('[SYNC] Initial Boot: Fetching last 14 days of executions.');
+            log.info('Initial Boot: Fetching last 14 days of executions.');
             execQuery = `
-                SELECT id, "workflowId", status, "startedAt", "stoppedAt"
+                SELECT id, "workflowId", status, "startedAt", "stoppedAt"${execPlan.select}
                 FROM execution_entity
                 WHERE "startedAt" > NOW() - INTERVAL '14 days'
                   ${notDeleted}
@@ -251,9 +299,9 @@ async function syncData() {
             // Incremental, with an overlap window so a late-committing row with a
             // lower id is not skipped for good. See ID_OVERLAP.
             const from = Math.max(0, lastId - ID_OVERLAP);
-            console.log(`[SYNC] Incremental Sync from execution_entity id: ${from} (high water ${lastId}, overlap ${ID_OVERLAP})`);
+            log.info(`Incremental Sync from execution_entity id: ${from} (high water ${lastId}, overlap ${ID_OVERLAP})`);
             execQuery = `
-                SELECT id, "workflowId", status, "startedAt", "stoppedAt"
+                SELECT id, "workflowId", status, "startedAt", "stoppedAt"${execPlan.select}
                 FROM execution_entity
                 WHERE id > $1
                   ${notDeleted}
@@ -294,7 +342,8 @@ async function syncData() {
                     e.workflowId,
                     e.status,
                     e.startedAt ? e.startedAt.toISOString() : null,
-                    e.stoppedAt ? e.stoppedAt.toISOString() : null
+                    e.stoppedAt ? e.stoppedAt.toISOString() : null,
+                    ...execPlan.values(e)
                 ];
             });
 
@@ -307,13 +356,14 @@ async function syncData() {
                 // startedAt is COALESCEd rather than overwritten: optimizeReplica
                 // backfilled it for 76 rows that Postgres has as NULL, and a plain
                 // assignment would wipe that repair on the very next sync.
-                `INSERT INTO execution_entity (id, "workflowId", status, "startedAt", "stoppedAt")
-                 VALUES (?, ?, ?, ?, ?)
+                `INSERT INTO execution_entity
+                    (id, "workflowId", status, "startedAt", "stoppedAt"${execPlan.select})
+                 VALUES (?, ?, ?, ?, ?${execPlan.placeholders})
                  ON CONFLICT(id) DO UPDATE SET
                     status = excluded.status,
                     "startedAt" = COALESCE(excluded."startedAt", execution_entity."startedAt"),
                     "stoppedAt" = excluded."stoppedAt",
-                    missing_since = NULL`,
+                    missing_since = NULL${execPlan.upsert}`,
                 batch
             );
             await localDb.execute('COMMIT');
@@ -321,10 +371,10 @@ async function syncData() {
         }
         // Reports what actually changed, not how many rows the overlap happened to
         // re-read — otherwise every idle cycle would claim it synced 500 executions.
-        console.log(`[SYNC] ${syncedCount} new or changed executions (${newExecs.rows.length} rows read).`);
+        log.info(`${syncedCount} new or changed executions (${newExecs.rows.length} rows read).`);
 
         // 3. Update Concurrency Stats (UTC Standardized)
-        await updateConcurrencyStats();
+        await updateExecutionVolumeStats();
 
         // 4. Deep Error Analytics.
         //
@@ -340,86 +390,470 @@ async function syncData() {
         // Brings the history in line whenever the rules change. No-op otherwise.
         const reclassified = await reclassifyIfNeeded();
 
-        return {
+        // Last, so it can never remove a trace that this cycle still needed:
+        // reclassification reads error_stack.
+        const purged = await purgeExpiredErrorDetail();
+
+        // One-time catch-up for the columns F-01 added. Deliberately after
+        // everything else: it is the only work here that nobody is waiting for,
+        // and it is time-boxed so a cycle spends its budget on today's data
+        // before it spends any on history.
+        const backfilled = await backfillMirroredColumns(execPlan);
+
+        const result = {
             status: 'ok',
             workflows: workflows.rows.length,
             executions: syncedCount,
             rowsRead: newExecs.rows.length,
             errors: errorIds.size,
             analytics,
-            reclassified: reclassified.ran ? reclassified.changed : 0
+            reclassified: reclassified.ran ? reclassified.changed : 0,
+            purged,
+            backfilled
         };
+        await recordSyncRun(runStartedAt, runStartedHr, result);
+        return result;
 
     } catch (err) {
-        console.error('[SYNC] Sync Error:', err);
-        try { await localDb.execute('ROLLBACK'); } catch (e) { }
-        return { status: 'failed', error: err.message };
+        log.error('Sync Error:', err);
+        try { await localDb.execute('ROLLBACK'); } catch (e) { /* the caught error above is the one worth reporting */ }
+        const failure = { status: 'failed', error: err.message };
+        await recordSyncRun(runStartedAt, runStartedHr, failure);
+        return failure;
     } finally {
         isSyncing = false;
     }
 }
 
-async function updateConcurrencyStats() {
-    try {
-        console.log('[SYNC] Re-calculating concurrency stats using Node.js temporal engine...');
+/**
+ * Ages out the two heavy columns in execution_error_analytics.
+ *
+ * Together they are roughly 42 MB of a 95 MB replica and nothing ever expires
+ * them. The row itself is always kept — every count, category and timeline on
+ * the dashboard is computed from the other columns, so a purged row still
+ * appears everywhere it used to; only the raw evidence behind it is gone.
+ *
+ * Two knobs, not one, because the two columns are not the same kind of data:
+ *
+ *   input_data is the actual payload that entered the failing node — real
+ *   customer data, ~19 MB — and NOTHING in this codebase reads it. It is written
+ *   and never used, which makes it pure liability: the thing H-06 exists to stop
+ *   the AI reaching, and the thing a copy of this database would leak. Purged by
+ *   default after 30 days.
+ *
+ *   error_stack is different: reclassifyIfNeeded and backfillErrorMessages both
+ *   re-derive the message and category FROM it. Purging it makes those rows
+ *   permanently unreclassifiable, so a future rules change would improve every
+ *   recent error and silently skip the old ones. It is therefore kept by default
+ *   and only aged out if the operator asks — see ERROR_STACK_RETENTION_DAYS in
+ *   .env.example, which says so plainly.
+ *
+ * The freed pages are reused by SQLite for new rows, so the file stops growing;
+ * it does not shrink until someone runs a VACUUM. That is deliberately NOT done
+ * here — VACUUM rewrites the entire database under an exclusive lock and needs
+ * twice the file size in free space, which is not something a five-minute cron
+ * job should start on its own. src/scripts/optimizeReplica.js --apply does it.
+ */
+const ERROR_INPUT_RETENTION_DAYS = Number(process.env.ERROR_DETAIL_RETENTION_DAYS ?? 30);
+const ERROR_STACK_RETENTION_DAYS = Number(process.env.ERROR_STACK_RETENTION_DAYS ?? 0);
 
-        // 1. Generate 5-minute buckets for the last 24 hours in JS
-        const now = new Date();
-        const buckets = [];
-        for (let i = 0; i < 288; i++) { // 288 slots of 5 mins = 24h
-            const t = new Date(now.getTime() - (i * 5 * 60 * 1000));
-            // Round to nearest 5 mins
-            t.setSeconds(0, 0);
-            t.setMinutes(Math.floor(t.getMinutes() / 5) * 5);
-            buckets.push(t.toISOString());
-        }
-        buckets.reverse(); // Oldest first
-
-        // 2. Fetch all potentially relevant executions (started within last 30h to catch overlaps)
-        const lookback = new Date(now.getTime() - (30 * 60 * 60 * 1000)).toISOString();
-        // Compare the stored column directly instead of wrapping it in datetime().
-        // Every value is written by toISOString(), so the layout is identical and
-        // lexicographic ordering matches chronological ordering — which lets this
-        // use idx_exec_started instead of scanning the whole table.
-        const execs = await localDb.query(`
-            SELECT "startedAt" AS sAt, "stoppedAt" AS stAt, status
-            FROM execution_entity
-            WHERE "startedAt" >= ? OR "stoppedAt" IS NULL
-        `, [lookback]);
-
-        const execData = execs.rows
-            .filter(e => e.sAt)   // rows still queued have no start time yet
-            .map(e => ({
-                sAt: new Date(e.sAt),
-                stAt: e.stAt ? new Date(e.stAt) : null,
-                status: e.status
-            }));
-
-        // 3. Calculate execution volume in JS (Count starts within bucket)
-        const stats = buckets.map((bTime, index) => {
-            const bDate = new Date(bTime);
-            const nextBDate = new Date(bDate.getTime() + 5 * 60 * 1000);
-
-            const count = execData.filter(e => {
-                // Count if the execution STARTED within this 5-minute window
-                return e.sAt >= bDate && e.sAt < nextBDate;
-            }).length;
-
-            return { timestamp: bTime, active_count: count }; // We keep the column name 'active_count' for DB compatibility
-        });
-
-        // 4. Batch Insert (using transaction)
-        await localDb.execute('BEGIN TRANSACTION');
-        await localDb.execute('DELETE FROM concurrency_stats WHERE timestamp < ?', [buckets[0]]);
-        await localDb.executeMany(
-            'INSERT OR REPLACE INTO concurrency_stats (timestamp, active_count) VALUES (?, ?)',
-            stats.map(s => [s.timestamp, s.active_count])
+async function purgeExpiredErrorDetail() {
+    const purge = async (column, days) => {
+        // 0 or anything unparseable means "keep forever". A typo in an env var
+        // must not be read as "delete everything".
+        if (!Number.isFinite(days) || days <= 0) return 0;
+        const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+        const r = await localDb.execute(
+            `UPDATE execution_error_analytics
+                SET ${column} = NULL
+              WHERE timestamp < ? AND ${column} IS NOT NULL`,
+            [cutoff]
         );
-        await localDb.execute('COMMIT');
+        return r.changes || 0;
+    };
 
-        console.log(`[SYNC] Concurrency stats updated for ${buckets.length} intervals.`);
+    try {
+        const input = await purge('input_data', ERROR_INPUT_RETENTION_DAYS);
+        const stack = await purge('error_stack', ERROR_STACK_RETENTION_DAYS);
+        if (input || stack) {
+            log.info(
+                `Retention: cleared input_data on ${input} rows` +
+                `${stack ? `, error_stack on ${stack}` : ''}. ` +
+                'Run optimizeReplica.js --apply to reclaim the file space.'
+            );
+        }
+        return { input, stack };
     } catch (err) {
-        console.error('[SYNC] Concurrency Update Error:', err);
+        // Never fatal. Falling behind on retention costs disk; failing the sync
+        // over it costs the data the sync exists to collect.
+        log.error('Retention pass failed:', err.message);
+        return { input: 0, stack: 0 };
+    }
+}
+
+// Size of one backfill chunk, and how long a single cycle may spend on the
+// whole pass. The budget is what makes this safe to run inside a five-minute
+// cron: the work is resumable to the row, so being interrupted costs nothing but
+// the current chunk, and a replica with 500,000 historical rows catches up over
+// a few cycles instead of stalling one of them for minutes.
+const BACKFILL_CHUNK = Number(process.env.BACKFILL_CHUNK) || 2000;
+const BACKFILL_BUDGET_MS = Number(process.env.BACKFILL_BUDGET_MS) || 20000;
+
+const BACKFILL_KEY = 'backfill_009_cursor';
+
+async function putSetting(key, value) {
+    await localDb.execute(
+        `INSERT INTO dashboard_settings (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+        [key, value]
+    );
+}
+
+/**
+ * Fills the columns F-01 added on rows that were synced before it existed.
+ *
+ * Roughly 70,000 of this replica's 500,000 executions still exist in Postgres;
+ * the rest were pruned long ago and their new columns stay NULL forever. That is
+ * the honest outcome and the reason this pass needs a cursor rather than a
+ * simple "WHERE mode IS NULL" loop: without one, every cycle from now until the
+ * end of time would re-examine the 430,000 rows that can never be filled.
+ *
+ * `mode` is the sentinel. It is NOT NULL in n8n's schema, so a local row with a
+ * NULL mode is one this pass has not reached — there is no third possibility to
+ * confuse it with. If a source is old enough not to have the column at all the
+ * pass does not run, because then the sentinel would mean nothing.
+ *
+ * Progress is committed per chunk, so a crash, a deploy or a lock handover
+ * resumes from the last completed chunk rather than from the beginning.
+ *
+ * Never throws. This is catch-up work on data the dashboard already displays; it
+ * must not be able to fail a cycle that collected today's executions.
+ */
+async function backfillMirroredColumns(plan) {
+    const idle = { filled: 0, done: true };
+    if (!plan.any || !plan.cols.some((c) => c.pg === 'mode')) return idle;
+
+    try {
+        const stored = await localDb.query(
+            'SELECT value FROM dashboard_settings WHERE key = ?', [BACKFILL_KEY]
+        );
+        const state = stored.rows[0] ? stored.rows[0].value : null;
+        if (state === 'done') return idle;
+
+        let cursor = Number(state) || 0;
+        const deadline = Date.now() + BACKFILL_BUDGET_MS;
+        let filled = 0;
+        let examined = 0;
+
+        for (;;) {
+            // Ordered by id and bounded by the cursor, so this is a forward walk
+            // of the primary key rather than a scan of the whole table.
+            const pending = await localDb.query(
+                `SELECT id FROM execution_entity
+                  WHERE id > ? AND mode IS NULL
+                  ORDER BY id LIMIT ?`,
+                [cursor, BACKFILL_CHUNK]
+            );
+
+            if (pending.rows.length === 0) {
+                await putSetting(BACKFILL_KEY, 'done');
+                // The scaffold comes down with the building. This index exists to
+                // make the walk above cheap, and the walk happens once; left
+                // behind it would hold an entry for every row Postgres has
+                // already pruned — 404,632 of them here, 4.7 MB — to serve a
+                // query that will never run again.
+                for (const name of TRANSIENT_INDEXES) {
+                    await localDb.execute(`DROP INDEX IF EXISTS ${name}`);
+                }
+                log.info(
+                    `Backfill complete: ${filled} of ${examined} remaining rows filled ` +
+                    'this pass; the rest are no longer in Postgres.'
+                );
+                return { filled, done: true };
+            }
+
+            const ids = pending.rows.map((r) => r.id);
+            examined += ids.length;
+
+            const src = await pool.query(
+                `SELECT id${plan.select} FROM execution_entity WHERE id = ANY($1)`, [ids]
+            );
+
+            if (src.rows.length > 0) {
+                await localDb.execute('BEGIN TRANSACTION');
+                try {
+                    await localDb.executeMany(
+                        `UPDATE execution_entity SET ${plan.setList} WHERE id = ?`,
+                        src.rows.map((e) => [...plan.values(e), e.id])
+                    );
+                    // The cursor moves inside the same transaction as the rows it
+                    // describes. Committed separately, a crash between the two
+                    // would either redo work or — far worse — skip it.
+                    await putSetting(BACKFILL_KEY, String(ids[ids.length - 1]));
+                    await localDb.execute('COMMIT');
+                } catch (e) {
+                    await localDb.execute('ROLLBACK');
+                    throw e;
+                }
+                filled += src.rows.length;
+            } else {
+                await putSetting(BACKFILL_KEY, String(ids[ids.length - 1]));
+            }
+
+            cursor = ids[ids.length - 1];
+
+            if (Date.now() >= deadline) {
+                const left = await localDb.query(
+                    'SELECT COUNT(*) AS n FROM execution_entity WHERE id > ? AND mode IS NULL',
+                    [cursor]
+                );
+                log.info(
+                    `Backfill paused at execution ${cursor}: ${filled} rows filled this pass, ` +
+                    `${left.rows[0].n} still to examine. Resuming next cycle.`
+                );
+                return { filled, done: false };
+            }
+        }
+    } catch (err) {
+        log.error('Backfill pass failed:', err.message);
+        return { filled: 0, done: false };
+    }
+}
+
+/**
+ * Writes one row per ETL pass to sync_runs.
+ *
+ * The only record of the sync used to be console output, so "when did this last
+ * succeed" and "how long has it been getting slower" could not be answered — and
+ * the second question is the one that tells you a replica is outgrowing its box
+ * before it stops fitting. Failures are recorded too, with their message; a
+ * table that only holds successes cannot show a gap.
+ *
+ * Never throws. Bookkeeping must not be able to fail a sync that worked.
+ */
+const SYNC_RUN_HISTORY = Number(process.env.SYNC_RUN_HISTORY) || 500;
+
+async function recordSyncRun(startedAt, startedHr, result) {
+    try {
+        const durationMs = Math.round(Number(process.hrtime.bigint() - startedHr) / 1e6);
+        const a = result.analytics || {};
+        const p = result.purged || {};
+
+        let bytes = null;
+        try {
+            const page = await localDb.query('PRAGMA page_count');
+            const size = await localDb.query('PRAGMA page_size');
+            bytes = page.rows[0].page_count * size.rows[0].page_size;
+        } catch (e) { /* size is a nicety, not a reason to lose the row */ }
+
+        await localDb.execute(
+            `INSERT INTO sync_runs
+               (started_at, finished_at, duration_ms, status, workflows, executions, rows_read,
+                errors, analytics_done, analytics_failed, analytics_queued, reclassified,
+                purged_input, purged_stack, replica_bytes, error_message)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            [
+                startedAt.toISOString(), new Date().toISOString(), durationMs, result.status,
+                result.workflows ?? null, result.executions ?? null, result.rowsRead ?? null,
+                result.errors ?? null, a.processed ?? null, a.failed ?? null, a.remaining ?? null,
+                result.reclassified ?? null, p.input ?? null, p.stack ?? null, bytes,
+                result.error ?? null
+            ]
+        );
+
+        // Bounded history. This table is written every five minutes forever, and
+        // the point of it is trend over days, not a permanent archive.
+        await localDb.execute(
+            `DELETE FROM sync_runs WHERE id <= (
+                 SELECT MAX(id) FROM sync_runs
+             ) - ?`,
+            [SYNC_RUN_HISTORY]
+        );
+
+        log.info(`ETL pass ${result.status}`, {
+            ms: durationMs,
+            executions: result.executions ?? 0,
+            errors: result.errors ?? 0,
+            replicaMb: bytes ? +(bytes / 1048576).toFixed(1) : undefined
+        });
+    } catch (err) {
+        log.error('Could not record sync run:', err.message);
+    }
+}
+
+// n8n's sharing tables changed shape when projects arrived: before that,
+// shared_workflow pointed straight at a user. Probed the same way as the other
+// version-sensitive tables, so the dashboard scopes correctly on both.
+const getSharedWorkflowColumns = () => getTableColumns('shared_workflow');
+
+/**
+ * Mirrors n8n's authorization graph into the replica: projects, who belongs to
+ * them, and which workflows they hold.
+ *
+ * Replaced wholesale rather than upserted, and that is the whole point. Every
+ * other table here is append-mostly, so ON CONFLICT DO UPDATE is enough. Access
+ * is not: removing someone from a project is expressed in Postgres by the row
+ * *disappearing*, and an upsert-only sync can never observe a disappearance. A
+ * revoked user would keep their access here forever, which is precisely the
+ * failure this feature exists to prevent.
+ *
+ * The read happens before the transaction opens. If Postgres is unreachable the
+ * replica keeps the membership it already had — stale, but stale-and-correct
+ * beats empty, which under the fail-open rule in utils/scope.js would silently
+ * widen everyone's access rather than narrow it.
+ */
+async function syncAuthorization() {
+    try {
+        const columns = await getSharedWorkflowColumns();
+        if (columns.size === 0) {
+            log.warn('No shared_workflow table in the source — authorization not mirrored.');
+            return;
+        }
+
+        let projects = [];
+        let relations = [];
+        let shares = [];
+
+        if (columns.has('projectId')) {
+            const [p, r, s] = await Promise.all([
+                pool.query('SELECT id, name, type FROM project'),
+                pool.query('SELECT "projectId", "userId", role FROM project_relation'),
+                pool.query('SELECT "workflowId", "projectId", role FROM shared_workflow')
+            ]);
+            projects = p.rows.map((x) => [x.id, x.name, x.type]);
+            relations = r.rows.map((x) => [x.projectId, x.userId, x.role]);
+            shares = s.rows.map((x) => [x.workflowId, x.projectId, x.role]);
+        } else if (columns.has('userId')) {
+            // Pre-projects n8n. Each user is given a synthetic project of their
+            // own so the replica keeps one shape and the scoping query does not
+            // need a second branch of its own.
+            const s = await pool.query('SELECT "workflowId", "userId", role FROM shared_workflow');
+            const userIds = new Set(s.rows.map((x) => x.userId));
+            projects = [...userIds].map((u) => [`user:${u}`, `Personal (${u})`, 'personal']);
+            relations = [...userIds].map((u) => [`user:${u}`, u, 'project:personalOwner']);
+            shares = s.rows.map((x) => [x.workflowId, `user:${x.userId}`, x.role]);
+        } else {
+            log.warn('shared_workflow has neither projectId nor userId — authorization not mirrored.');
+            return;
+        }
+
+        await localDb.execute('BEGIN TRANSACTION');
+        try {
+            await localDb.execute('DELETE FROM shared_workflow');
+            await localDb.execute('DELETE FROM project_relation');
+            await localDb.execute('DELETE FROM project');
+            await localDb.executeMany(
+                'INSERT INTO project (id, name, type) VALUES (?, ?, ?)', projects
+            );
+            await localDb.executeMany(
+                'INSERT OR IGNORE INTO project_relation (project_id, user_id, role) VALUES (?, ?, ?)', relations
+            );
+            await localDb.executeMany(
+                'INSERT OR IGNORE INTO shared_workflow (workflow_id, project_id, role) VALUES (?, ?, ?)', shares
+            );
+            await localDb.execute('COMMIT');
+        } catch (e) {
+            await localDb.execute('ROLLBACK');
+            throw e;
+        }
+
+        invalidateScopeCache();
+        log.info(
+            `Authorization mirrored: ${projects.length} projects, ` +
+            `${relations.length} memberships, ${shares.length} workflow shares.`
+        );
+    } catch (err) {
+        // Deliberately swallowed. Executions are the reason this job exists; a
+        // membership refresh that failed this cycle will be retried in five
+        // minutes, and until then the previous mapping still applies.
+        log.error('Authorization sync failed:', err.message);
+    }
+}
+
+/**
+ * Recomputes the rolling 24-hour execution-volume series: how many executions
+ * STARTED in each five-minute bucket.
+ *
+ * Not concurrency. Nothing here has ever measured how many ran at the same time,
+ * and the old name (concurrency_stats.active_count) is what led the drill-down
+ * behind this chart to be written against overlap instead of starts. Real
+ * concurrency is F-06.
+ *
+ * Three things changed with the rename:
+ *
+ * 1. The counting happens in SQL. It used to pull every execution of the last 30
+ *    hours into memory and then run a filter over the whole array once per
+ *    bucket — 288 passes over N rows to produce 288 numbers. One GROUP BY does
+ *    the same work in a single indexed range scan.
+ *
+ * 2. The query no longer carries `OR "stoppedAt" IS NULL`. That clause existed to
+ *    catch long-running executions that overlapped the window, which only matters
+ *    if you are measuring overlap; it also made the whole predicate unindexable,
+ *    so this scanned the table every five minutes.
+ *
+ * 3. Only buckets whose value actually changed are written. The old code rewrote
+ *    all 288 rows every cycle — roughly 83,000 row writes a day into the WAL to
+ *    express, almost always, two changed numbers.
+ */
+async function updateExecutionVolumeStats() {
+    const STEP_MS = 5 * 60 * 1000;
+    const BUCKETS = 288;   // 24 hours
+
+    try {
+        // Bucket boundaries derived by UTC arithmetic. The previous version floored
+        // the LOCAL minute field before converting, which happens to agree because
+        // every real UTC offset is a multiple of five minutes — a coincidence, not
+        // a reason.
+        const newest = Math.floor(Date.now() / STEP_MS) * STEP_MS;
+        const oldest = newest - (BUCKETS - 1) * STEP_MS;
+        const oldestIso = new Date(oldest).toISOString();
+
+        // Bucket index straight from the timestamp, so the grouping is the same
+        // arithmetic the JS below uses to turn an index back into a boundary.
+        const counted = await localDb.query(
+            `SELECT CAST((julianday("startedAt") - julianday(?)) * 86400.0 / 300 AS INTEGER) AS bucket_idx,
+                    COUNT(*) AS started_count
+               FROM execution_entity
+              WHERE "startedAt" >= ?
+              GROUP BY bucket_idx`,
+            [oldestIso, oldestIso]
+        );
+        const byIndex = new Map(counted.rows.map(r => [r.bucket_idx, r.started_count]));
+
+        const existing = new Map(
+            (await localDb.query(
+                'SELECT timestamp, started_count FROM execution_volume_stats WHERE timestamp >= ?',
+                [oldestIso]
+            )).rows.map(r => [r.timestamp, r.started_count])
+        );
+
+        const changed = [];
+        for (let i = 0; i < BUCKETS; i++) {
+            const ts = new Date(oldest + i * STEP_MS).toISOString();
+            const count = byIndex.get(i) || 0;
+            if (existing.get(ts) !== count) changed.push([ts, count]);
+        }
+
+        await localDb.execute('BEGIN TRANSACTION');
+        try {
+            const dropped = await localDb.execute(
+                'DELETE FROM execution_volume_stats WHERE timestamp < ?', [oldestIso]
+            );
+            await localDb.executeMany(
+                'INSERT OR REPLACE INTO execution_volume_stats (timestamp, started_count) VALUES (?, ?)',
+                changed
+            );
+            await localDb.execute('COMMIT');
+            log.info(
+                `Execution volume: ${changed.length} of ${BUCKETS} buckets changed` +
+                `${dropped.changes ? `, ${dropped.changes} expired` : ''}.`
+            );
+        } catch (e) {
+            await localDb.execute('ROLLBACK');
+            throw e;
+        }
+    } catch (err) {
+        log.error('Execution volume update failed:', err.message);
     }
 }
 
@@ -443,7 +877,7 @@ async function reclassifyIfNeeded() {
     const current = stored.rows[0] ? Number(stored.rows[0].value) : 0;
     if (current === CLASSIFIER_VERSION) return { ran: false };
 
-    console.log(`[SYNC] Classifier rules changed (v${current} -> v${CLASSIFIER_VERSION}). Re-classifying stored errors…`);
+    log.info(`Classifier rules changed (v${current} -> v${CLASSIFIER_VERSION}). Re-classifying stored errors…`);
 
     const rows = await localDb.query(
         `SELECT id, error_message, error_type, error_stack, node_type, error_category, http_code
@@ -479,12 +913,12 @@ async function reclassifyIfNeeded() {
         );
         await localDb.execute('COMMIT');
     } catch (e) {
-        try { await localDb.execute('ROLLBACK'); } catch (err) { }
-        console.error('[SYNC] Re-classification failed, rolled back:', e.message);
+        try { await localDb.execute('ROLLBACK'); } catch (err) { /* the caught error above is the one worth reporting */ }
+        log.error('Re-classification failed, rolled back:', e.message);
         return { ran: false, error: e.message };
     }
 
-    console.log(`[SYNC] Re-classified ${changed} of ${rows.rows.length} stored errors.`);
+    log.info(`Re-classified ${changed} of ${rows.rows.length} stored errors.`);
     return { ran: true, changed, total: rows.rows.length };
 }
 
@@ -541,8 +975,8 @@ async function processAnalyticsQueue() {
     );
     const remaining = left.rows[0].n;
 
-    console.log(
-        `[SYNC] Error analytics: ${processed} extracted, ${failed} failed, ${remaining} still queued.`
+    log.info(
+        `Error analytics: ${processed} extracted, ${failed} failed, ${remaining} still queued.`
     );
     return { processed, failed, remaining };
 }
@@ -567,7 +1001,7 @@ async function syncErrorAnalytics(errorIdsArray) {
                     `UPDATE execution_entity SET analytics_status = 'failed', analytics_attempts = ? WHERE id = ?`,
                     [attempts, id]
                 );
-                console.warn(`[SYNC] Giving up on analytics for execution ${id} after ${attempts} attempts (${reason}).`);
+                log.warn(`Giving up on analytics for execution ${id} after ${attempts} attempts (${reason}).`);
             } else {
                 await localDb.execute(
                     `UPDATE execution_entity
@@ -596,7 +1030,7 @@ async function syncErrorAnalytics(errorIdsArray) {
         result = await pool.query(query, [errorIdsArray, MAX_PAYLOAD_BYTES]);
     } catch (e) {
         // The whole chunk failed — a timeout, a dropped connection. Retry later.
-        console.error(`[SYNC] Payload fetch failed for ${errorIdsArray.length} errors:`, e.message);
+        log.error(`Payload fetch failed for ${errorIdsArray.length} errors:`, e.message);
         await markFailed(errorIdsArray, e.message);
         return { done: 0, failed: errorIdsArray.length };
     }
@@ -611,7 +1045,7 @@ async function syncErrorAnalytics(errorIdsArray) {
             `UPDATE execution_entity SET analytics_status = 'failed' WHERE id IN (${placeholders})`,
             vanished
         );
-        console.warn(`[SYNC] ${vanished.length} error payloads no longer exist in Postgres — pruned before extraction.`);
+        log.warn(`${vanished.length} error payloads no longer exist in Postgres — pruned before extraction.`);
     }
 
     const succeeded = [];
@@ -622,7 +1056,7 @@ async function syncErrorAnalytics(errorIdsArray) {
 
         await localDb.execute('BEGIN TRANSACTION');
 
-        for (let row of result.rows) {
+        for (const row of result.rows) {
             const dataStr = row.data;
             if (!dataStr) {
                 if (row.data_bytes > MAX_PAYLOAD_BYTES) {
@@ -640,14 +1074,14 @@ async function syncErrorAnalytics(errorIdsArray) {
                 if (fullData && typeof fullData === 'object' && fullData.data) {
                     if (typeof fullData.data === 'string') {
                         // Some versions base64 encode or double json stringify
-                        try { fullData = parse(fullData.data); } catch (e) { }
+                        try { fullData = parse(fullData.data); } catch (e) { /* not doubly-encoded; keep what we have */ }
                     }
                 }
             } catch (e) {
                 // Left in the queue deliberately, not silently dropped: it gets a
                 // backoff and a bounded number of retries, and if the trace is
                 // simply unparseable it ends up 'failed' where it can be counted.
-                console.error(`[SYNC] Failed to parse data for execution ${row.exec_id}`);
+                log.error(`Failed to parse data for execution ${row.exec_id}`);
                 continue;
             }
 
@@ -681,7 +1115,7 @@ async function syncErrorAnalytics(errorIdsArray) {
 
                 // Extract metadata
                 if (fullData.executionData?.metadata) {
-                    try { metadataJson = JSON.stringify(fullData.executionData.metadata); } catch (e) { }
+                    try { metadataJson = JSON.stringify(fullData.executionData.metadata); } catch (e) { /* circular or unserialisable metadata is optional detail */ }
                 }
 
                 // Attempt to find the source node and branch
@@ -692,7 +1126,7 @@ async function syncErrorAnalytics(errorIdsArray) {
 
                         // Grab input data that led to the crash
                         if (lastFrame?.data) {
-                            try { inputData = JSON.stringify(lastFrame.data); } catch (e) { }
+                            try { inputData = JSON.stringify(lastFrame.data); } catch (e) { /* circular or unserialisable payload is optional detail */ }
                         }
 
                         if (lastFrame?.source?.main && lastFrame.source.main.length > 0) {
@@ -722,13 +1156,13 @@ async function syncErrorAnalytics(errorIdsArray) {
 
                 executionSource = root.executionData?.runtimeData?.source || "";
                 if (root.executionData?.metadata) {
-                    try { metadataJson = JSON.stringify(root.executionData.metadata); } catch (e) { }
+                    try { metadataJson = JSON.stringify(root.executionData.metadata); } catch (e) { /* circular or unserialisable metadata is optional detail */ }
                 }
 
                 if (root.executionData?.nodeExecutionStack) {
                     const lastFrame = root.executionData.nodeExecutionStack[root.executionData.nodeExecutionStack.length - 1];
                     if (lastFrame?.data) {
-                        try { inputData = JSON.stringify(lastFrame.data); } catch (e) { }
+                        try { inputData = JSON.stringify(lastFrame.data); } catch (e) { /* circular or unserialisable payload is optional detail */ }
                     }
                 }
             }
@@ -833,8 +1267,8 @@ async function syncErrorAnalytics(errorIdsArray) {
             // One line, not one per row: a spike would otherwise bury everything
             // else in the log with the same message repeated hundreds of times.
             const biggest = Math.max(...oversized.map(o => o.bytes));
-            console.warn(
-                `[SYNC] ${oversized.length} error payload(s) skipped for exceeding ` +
+            log.warn(
+                `${oversized.length} error payload(s) skipped for exceeding ` +
                 `${formatBytes(MAX_PAYLOAD_BYTES)} (largest ${formatBytes(biggest)}): ` +
                 `${oversized.slice(0, 5).map(o => o.id).join(', ')}` +
                 `${oversized.length > 5 ? `, +${oversized.length - 5} more` : ''}. ` +
@@ -843,7 +1277,7 @@ async function syncErrorAnalytics(errorIdsArray) {
         }
 
         await localDb.execute('COMMIT');
-        console.log(`[SYNC] Error Analytics updated for ${analyticsData.length} records.`);
+        log.info(`Error Analytics updated for ${analyticsData.length} records.`);
 
         // Debug Export.
         //
@@ -859,17 +1293,17 @@ async function syncErrorAnalytics(errorIdsArray) {
                     : path.resolve(__dirname, '../../scratch/debug_errors.json');
                 fs.mkdirSync(path.dirname(outPath), { recursive: true });
                 fs.writeFileSync(outPath, JSON.stringify(analyticsData, null, 2));
-                console.log(`[SYNC] Raw debug export saved to ${outPath}`);
+                log.info(`Raw debug export saved to ${outPath}`);
             } catch (e) {
-                console.error('[SYNC] Could not write the debug export:', e.message);
+                log.error('Could not write the debug export:', e.message);
             }
         }
 
         return { done: succeeded.length, failed: vanished.length + oversized.length };
 
     } catch (e) {
-        console.error('[SYNC] Failed to map error analytics:', e);
-        try { await localDb.execute('ROLLBACK'); } catch (err) { }
+        log.error('Failed to map error analytics:', e);
+        try { await localDb.execute('ROLLBACK'); } catch (err) { /* the caught error above is the one worth reporting */ }
         // The rollback undid the 'done' marks too, so everything in this chunk is
         // still pending. Give it a backoff so the next cycle does not walk
         // straight back into the same failure.
@@ -916,11 +1350,13 @@ function waitForIdle(timeoutMs = 8000) {
 
 module.exports = {
     syncData,
-    updateConcurrencyStats,
+    syncAuthorization,
+    updateExecutionVolumeStats,
     syncErrorAnalytics,
     enqueueForAnalytics,
     processAnalyticsQueue,
     reclassifyIfNeeded,
+    purgeExpiredErrorDetail,
     isSyncActive,
     waitForIdle
 };

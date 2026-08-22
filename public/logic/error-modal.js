@@ -77,10 +77,7 @@
     document.body.insertAdjacentHTML('beforeend', modalHTML);
 
     // 3. Logic
-    let currentExecId = null;
-
     window.showErrorSnapshot = async function (execId) {
-        currentExecId = execId;
         const modal = document.getElementById('errorModal');
         const container = document.getElementById('modalContainer');
         const msgBox = document.getElementById('modalErrorMessage');
@@ -120,12 +117,22 @@
             const response = await fetchWithAuth(`/api/execution-error/${execId}`);
             const data = await response.json();
 
+            // A 404 here is either a pruned payload or an execution outside this
+            // user's projects — the server answers both the same way on purpose.
+            // Rendering it as "Unknown Node" made a refusal look like a parsing
+            // failure and sent people looking for a bug in the trace.
+            if (!response.ok) {
+                nodeBox.innerText = '--';
+                msgBox.innerText = data.error || 'This execution is not available.';
+                timestampBox.innerText = '';
+                return;
+            }
+
             nodeBox.innerText = data.nodeName || 'Unknown Node';
             msgBox.innerText = data.message || 'Snapshot unavailable. Try fetching the raw trace.';
             
             if (data.timestamp) {
-                const date = new Date(data.timestamp);
-                timestampBox.innerText = date.toLocaleString();
+                timestampBox.innerText = window.formatTime(data.timestamp);
             } else {
                 timestampBox.innerText = 'Post-Mortem Analysis';
             }

@@ -1,6 +1,8 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const fs = require('fs');
+const { MIGRATIONS } = require('./schema');
+const log = require('../utils/logger').logger('DB');
 
 // Configurable so the replica can live on a mounted volume instead of inside the
 // container. It holds history that has already been pruned from the n8n Postgres
@@ -9,18 +11,70 @@ const dbPath = process.env.DASHBOARD_DB_PATH
     ? path.resolve(process.env.DASHBOARD_DB_PATH)
     : path.resolve(__dirname, '../../dashboard.sqlite');
 
-// A freshly created volume is an empty directory — the parent must exist before opening.
-fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+/**
+ * The replica's directory must exist and be writable before anything else runs.
+ *
+ * Checked here, loudly, because the failure this catches is the one that has the
+ * least helpful default message. The container runs as the unprivileged `node`
+ * user, and Docker applies image ownership only to a volume it creates empty — a
+ * volume that already exists from a previous root-owned container is left exactly
+ * as it was. The result is EACCES, surfacing as SQLITE_CANTOPEN with no hint of
+ * why, on a deployment that worked yesterday.
+ *
+ * Exits rather than continuing. Without the replica every endpoint returns 500,
+ * and a process that stays up while being unable to do anything is harder to
+ * diagnose than one that stops and says why.
+ */
+function ensureWritableDataDir(dir) {
+    try {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.accessSync(dir, fs.constants.W_OK);
+    } catch (err) {
+        log.error(
+            `\n[DB] Cannot write to ${dir} (${err.code || err.message}).\n` +
+            `     The dashboard runs as an unprivileged user and needs to own this directory.\n` +
+            `     If this is a Docker volume created by an older, root-owned version, run once:\n\n` +
+            `       docker run --rm -v <your-volume>:/data alpine chown -R 1000:1000 /data\n\n` +
+            `     Then start the container again.\n`
+        );
+        process.exit(1);
+    }
+}
+
+ensureWritableDataDir(path.dirname(dbPath));
+
+/**
+ * Resolves once the schema is up to date.
+ *
+ * server.js awaits this before it listens or schedules the ETL. The migrations
+ * await between statements, so unlike the old synchronous serialize() block they
+ * do not implicitly queue ahead of everything else on the connection — a request
+ * arriving mid-migration would query a table that is not there yet.
+ *
+ * Declared before the connection is opened, so the open callback closes over a
+ * binding that already exists rather than one further down the file.
+ */
+let signalReady;
+const ready = new Promise((resolve) => { signalReady = resolve; });
 
 const localDb = new sqlite3.Database(dbPath, (err) => {
     if (err) {
-        console.error('Error opening local SQLite database', err.message);
-    } else {
-        console.log(`Connected to the local SQLite database at ${dbPath}`);
-        applyPragmas();
-        initDb();
+        // Fatal. Every endpoint depends on this file; staying up only turns one
+        // clear message at boot into a 500 on every request afterwards.
+        log.error(`Could not open ${dbPath}: ${err.message}`);
+        process.exit(1);
     }
+    log.info(`Connected to the local SQLite database at ${dbPath}`);
+    // Chained, not fired side by side. node-sqlite3 runs statements in parallel
+    // mode by default — serialize() only orders the ones issued inside its
+    // callback — so the pragmas and the migrations were racing. The first boot
+    // after the migrations arrived died on
+    // "Safety level may not be changed inside a transaction": PRAGMA synchronous
+    // had landed in the middle of a migration's BEGIN.
+    signalReady(applyPragmas().then(() => runMigrations(localDb)));
 });
+
+localDb.ready = ready;
 
 /**
  * Connection tuning. Must run before any other statement.
@@ -30,225 +84,104 @@ const localDb = new sqlite3.Database(dbPath, (err) => {
  * on a five minute rhythm. WAL lets readers continue against the last committed
  * snapshot while the sync writes.
  */
-function applyPragmas() {
-    localDb.serialize(() => {
+async function applyPragmas() {
+    const pragmas = [
         // Persisted in the database header — survives restarts and file copies.
-        localDb.run('PRAGMA journal_mode = WAL', (e) => {
-            if (e) console.error('[DB] Could not enable WAL:', e.message);
-        });
+        'PRAGMA journal_mode = WAL',
         // Per-connection, so these are reapplied on every boot.
-        localDb.run('PRAGMA synchronous = NORMAL');   // safe under WAL, far fewer fsyncs
-        localDb.run('PRAGMA busy_timeout = 5000');    // wait instead of throwing SQLITE_BUSY
-        localDb.run('PRAGMA foreign_keys = ON');      // the schema declares them; enforce them
-        localDb.run('PRAGMA cache_size = -32000');    // ~32 MB page cache
-    });
+        'PRAGMA synchronous = NORMAL',   // safe under WAL, far fewer fsyncs
+        'PRAGMA busy_timeout = 5000',    // wait instead of throwing SQLITE_BUSY
+        'PRAGMA foreign_keys = ON',      // the schema declares them; enforce them
+        'PRAGMA cache_size = -32000'     // ~32 MB page cache
+    ];
+
+    for (const pragma of pragmas) {
+        try {
+            await localDb.execute(pragma);
+        } catch (err) {
+            // Awaited one at a time and each error caught. Fired without a
+            // callback, as these were, a failing pragma surfaces as an 'error'
+            // event on the Database — which is an uncaught exception that takes
+            // the process down at boot, several frames away from the cause.
+            log.error(`${pragma} failed:`, err.message);
+        }
+    }
+}
+
+// The schema itself lives in schema.js — it is data, and things that only want
+// to read it should not have to open a database to do so. What stays here is the
+// part that touches the disk.
+
+/** Adds a column only if the table does not already have it. */
+async function addColumnIfMissing(db, table, column, definition) {
+    const info = await db.query(`PRAGMA table_info(${table})`);
+    if (info.rows.some((c) => c.name === column)) return false;
+    await db.execute(`ALTER TABLE ${table} ADD COLUMN "${column}" ${definition}`);
+    log.info(`Added column ${table}.${column}`);
+    return true;
 }
 
 /**
- * Indexes for the access patterns the dashboard actually uses.
+ * Applies every migration that has not run yet.
  *
- * Every one of these is IF NOT EXISTS and cheap to re-run. On a replica that has
- * already been indexed offline this is a no-op; on a fresh one it costs a few
- * seconds at boot and saves a full scan of the whole table on every request.
+ * Each one is wrapped in its own transaction together with the row that records
+ * it, so the two can never disagree: a crash halfway leaves the migration
+ * unapplied AND unrecorded, and the next boot simply retries it.
+ *
+ * A failure exits the process. The alternative is serving a dashboard whose
+ * schema is in a state nobody has described, against a database holding history
+ * that cannot be rebuilt.
  */
-function createIndexes() {
-    const indexes = [
-        // Time-range filters on the dashboard and the executions table.
-        'CREATE INDEX IF NOT EXISTS idx_exec_started ON execution_entity("startedAt")',
-        // Per-workflow drilldowns and the workflow filter.
-        'CREATE INDEX IF NOT EXISTS idx_exec_wf_started ON execution_entity("workflowId", "startedAt")',
-        // Error-rate aggregation and status filtering.
-        'CREATE INDEX IF NOT EXISTS idx_exec_status_started ON execution_entity(status, "startedAt")',
-        // Error intelligence: range scans, per-workflow drilldown, group dedup.
-        'CREATE INDEX IF NOT EXISTS idx_err_ts ON execution_error_analytics(timestamp)',
-        'CREATE INDEX IF NOT EXISTS idx_err_wf_ts ON execution_error_analytics(workflow_id, timestamp)',
-        'CREATE INDEX IF NOT EXISTS idx_err_cat_node ON execution_error_analytics(error_category, node_name)',
-        // Chat history is read per user, newest first.
-        'CREATE INDEX IF NOT EXISTS idx_chat_user_created ON dashboard_chat_history(user_id, created_at)'
-    ];
+async function runMigrations(db) {
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            id TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        )
+    `);
 
-    localDb.serialize(() => {
-        for (const sql of indexes) {
-            localDb.run(sql, (e) => {
-                if (e) console.error('[DB] Index creation failed:', sql, e.message);
-            });
+    const applied = new Set(
+        (await db.query('SELECT id FROM schema_migrations')).rows.map((r) => r.id)
+    );
+
+    let ran = 0;
+    for (const migration of MIGRATIONS) {
+        if (applied.has(migration.id)) continue;
+
+        await db.execute('BEGIN TRANSACTION');
+        try {
+            for (const sql of migration.sql || []) {
+                await db.execute(sql);
+            }
+            for (const [table, column, definition] of migration.columns || []) {
+                await addColumnIfMissing(db, table, column, definition);
+            }
+            if (migration.run) await migration.run(db);
+
+            await db.execute(
+                'INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)',
+                [migration.id, new Date().toISOString()]
+            );
+            await db.execute('COMMIT');
+            ran++;
+        } catch (err) {
+            try { await db.execute('ROLLBACK'); } catch (e) { /* the failure below is the one that matters */ }
+            log.error(
+                `\n[DB] Migration ${migration.id} failed: ${err.message}\n` +
+                `     The database is unchanged — this migration ran inside a transaction.\n` +
+                `     Refusing to start against a schema in an unknown state.\n`
+            );
+            process.exit(1);
         }
-        // Lets the query planner choose between the indexes above instead of guessing.
-        localDb.run('ANALYZE', (e) => {
-            if (e) console.error('[DB] ANALYZE failed:', e.message);
-            else console.log('[DB] Indexes verified.');
-        });
-    });
-}
+    }
 
-function initDb() {
-    localDb.serialize(() => {
-        // Users table
-        localDb.run(`
-            CREATE TABLE IF NOT EXISTS users (
-                id TEXT PRIMARY KEY,
-                email TEXT
-            )
-        `);
+    if (ran > 0) log.info(`Applied ${ran} schema migration(s).`);
 
-        // Chat History
-        localDb.run(`
-            CREATE TABLE IF NOT EXISTS dashboard_chat_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                sql_used TEXT,
-                -- UTC, matching every other timestamp in this database. The old
-                -- 'localtime' default made chat ordering depend on the server's offset.
-                created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
-            )
-        `);
-
-        // Workflow Entity Replica
-        localDb.run(`
-            CREATE TABLE IF NOT EXISTS workflow_entity (
-                id TEXT PRIMARY KEY,
-                name TEXT,
-                active BOOLEAN
-            )
-        `);
-
-        // Workflow Settings (ROI)
-        localDb.run(`
-            CREATE TABLE IF NOT EXISTS workflow_settings (
-                workflow_id TEXT PRIMARY KEY,
-                saved_time_seconds INTEGER DEFAULT 0,
-                hourly_rate REAL DEFAULT 0,
-                FOREIGN KEY (workflow_id) REFERENCES workflow_entity (id) ON DELETE CASCADE
-            )
-        `);
-
-        // Migration: add hourly_rate if it doesn't exist
-        localDb.run(`ALTER TABLE workflow_settings ADD COLUMN hourly_rate REAL DEFAULT 0`, (err) => {
-            // Silence the duplicate column error on startup
-        });
-
-        // Execution Entity Replica
-        localDb.run(`
-            CREATE TABLE IF NOT EXISTS execution_entity (
-                id INTEGER PRIMARY KEY,
-                "workflowId" TEXT,
-                status TEXT,
-                "startedAt" DATETIME,
-                "stoppedAt" DATETIME,
-                -- First cycle in which Postgres stopped returning this row while
-                -- it was still non-terminal. Non-null means "we asked and it was
-                -- gone"; the sync promotes it to status 'unknown' once the grace
-                -- period passes. Without this, a pruned 'running' row stays
-                -- 'running' forever — one sat that way since 16/05/2026.
-                missing_since DATETIME
-            )
-        `);
-
-        // Migration: add missing_since to replicas created before it existed.
-        localDb.run(`ALTER TABLE execution_entity ADD COLUMN missing_since DATETIME`, (err) => {
-            // Silence the duplicate column error on startup
-        });
-
-        // Work queue for deep error analytics.
-        //
-        // Extraction used to happen only for the ids discovered in the current
-        // cycle: one failure and that execution's detail was lost for good, with
-        // nothing recording that it had been lost. 64 error executions had no
-        // analytics row and nothing would ever have noticed. These columns make
-        // the work outlive the cycle that discovered it.
-        localDb.run(`ALTER TABLE execution_entity ADD COLUMN analytics_status TEXT`, (err) => { });
-        localDb.run(`ALTER TABLE execution_entity ADD COLUMN analytics_attempts INTEGER DEFAULT 0`, (err) => { });
-        localDb.run(`ALTER TABLE execution_entity ADD COLUMN analytics_next_attempt DATETIME`, (err) => { });
-
-        // Partial index: the queue is a handful of rows in a table of half a
-        // million, and only the pending ones are ever queried.
-        localDb.run(`
-            CREATE INDEX IF NOT EXISTS idx_exec_analytics_pending
-            ON execution_entity(analytics_next_attempt, id)
-            WHERE analytics_status = 'pending'
-        `);
-
-        // One-time seed. Every historical error is marked 'done' if its analytics
-        // row exists and 'pending' if it does not, which is what recovers the 64
-        // that were silently dropped. Touches only rows that have never been
-        // marked, so it is a no-op from the second boot onwards.
-        localDb.run(`
-            UPDATE execution_entity
-               SET analytics_status = CASE
-                     WHEN EXISTS (SELECT 1 FROM execution_error_analytics a WHERE a.id = execution_entity.id)
-                     THEN 'done' ELSE 'pending' END
-             WHERE status IN ('error', 'crashed')
-               AND analytics_status IS NULL
-        `, function (err) {
-            if (err) console.error('[DB] Could not seed analytics queue:', err.message);
-            else if (this.changes > 0) console.log(`[DB] Analytics queue seeded for ${this.changes} historical errors.`);
-        });
-
-        // Concurrency Stats Table
-        localDb.run(`
-            CREATE TABLE IF NOT EXISTS concurrency_stats (
-                timestamp DATETIME PRIMARY KEY,
-                active_count INTEGER
-            )
-        `);
-
-        // Global Dashboard Settings (Timezone, etc)
-        localDb.run(`
-            CREATE TABLE IF NOT EXISTS dashboard_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-        `);
-
-        // NOTE: `instance_lock` is deliberately NOT created here. It is created by
-        // instanceLock.js, which awaits its own schema before the first attempt —
-        // initDb() runs from the open callback and is still in flight when the
-        // first heartbeat fires, so a table defined here would not exist yet.
-        // Keeping one definition, in the file that understands the table, also
-        // means the two cannot drift apart.
-
-        // Execution Error Analytics
-        localDb.run(`
-            CREATE TABLE IF NOT EXISTS execution_error_analytics (
-                id INTEGER PRIMARY KEY,
-                workflow_id TEXT,
-                node_id TEXT,
-                node_name TEXT,
-                node_type TEXT,
-                error_type TEXT,
-                error_message TEXT,
-                error_stack TEXT,
-                source_node TEXT,
-                source_output_index INTEGER,
-                input_data TEXT,
-                metadata TEXT,
-                execution_source TEXT,
-                error_category TEXT DEFAULT 'unknown',
-                -- HTTP status from the n8n error object when there is one. Far more
-                -- reliable than hunting for "429" inside free text, so the classifier
-                -- consults it first. Only populated going forward — it was never
-                -- extracted before, so it stays NULL on historical rows.
-                http_code INTEGER,
-                timestamp DATETIME
-            )
-        `);
-
-        // Migration: add http_code to replicas created before it existed.
-        localDb.run(`ALTER TABLE execution_error_analytics ADD COLUMN http_code INTEGER`, (err) => {
-            // Silence the duplicate column error on startup
-        });
-
-        // Migration: add error_category if it doesn't exist
-        localDb.run(`ALTER TABLE execution_error_analytics ADD COLUMN error_category TEXT DEFAULT 'unknown'`, (err) => {
-            // Silence the duplicate column error on startup
-        });
-
-        // Indexes last, so every table they reference already exists.
-        createIndexes();
-    });
+    // Outside the loop and outside any transaction: ANALYZE only refreshes the
+    // planner's statistics, and it is worth re-running whenever the data has
+    // grown, not only when the schema changed.
+    await db.execute('ANALYZE');
+    log.info('Schema ready.');
 }
 
 // Convert callback based queries to promises for easier async/await usage
@@ -289,7 +222,7 @@ localDb.execute = function (sql, params = []) {
  */
 localDb.executeMany = function (sql, rows) {
     return new Promise((resolve, reject) => {
-        if (!rows || rows.length === 0) return resolve(0);
+        if (!rows || rows.length === 0) { resolve(0); return; }
 
         const stmt = this.prepare(sql, (prepErr) => {
             if (prepErr) return reject(prepErr);
@@ -329,10 +262,10 @@ localDb.executeMany = function (sql, rows) {
 localDb.closeAsync = function () {
     return new Promise((resolve) => {
         this.run('PRAGMA wal_checkpoint(TRUNCATE)', (err) => {
-            if (err) console.error('[DB] WAL checkpoint failed:', err.message);
+            if (err) log.error('WAL checkpoint failed:', err.message);
             this.close((closeErr) => {
-                if (closeErr) console.error('[DB] Error closing replica:', closeErr.message);
-                else console.log('[DB] Replica closed cleanly.');
+                if (closeErr) log.error('Error closing replica:', closeErr.message);
+                else log.info('Replica closed cleanly.');
                 resolve();
             });
         });

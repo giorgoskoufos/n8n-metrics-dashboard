@@ -1,10 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const aiController = require('../controllers/aiController');
-const { authenticateToken } = require('../middlewares/auth');
-const { aiLimiter } = require('../middlewares/rateLimiter');
+const { authenticateToken, resolveScope } = require('../middlewares/auth');
+const { aiLimiter, globalApiLimiter } = require('../middlewares/rateLimiter');
 
-router.post('/ai-chat', authenticateToken, aiLimiter, aiController.chat);
-router.get('/chat-history', authenticateToken, aiController.getHistory);
+router.use(authenticateToken, globalApiLimiter, resolveScope);
+
+router.post('/ai-chat', aiLimiter, aiController.chat);
+router.get('/chat-history', aiController.getHistory);
 
 module.exports = router;

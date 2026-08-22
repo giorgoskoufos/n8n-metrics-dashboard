@@ -1,5 +1,6 @@
 const openai = require('../config/openai');
 const localDb = require('../config/localDb');
+const log = require('../utils/logger').logger('AI');
 
 // Schema for AI context (SQLite dialect)
 const dbSchema = `
@@ -28,6 +29,22 @@ const dbSchema = `
 exports.chat = async (req, res) => {
     const userMessage = req.body.message;
     const userId = req.user.id;
+
+    // The assistant answers by running SQL it wrote itself against the whole
+    // replica. Every other endpoint can be scoped because its query is written
+    // here; this one cannot, and appending a filter to a query the model composed
+    // is not something to guess at — a single subquery or UNION would step around
+    // it. Until H-06 replaces free-form SQL with an allowlist the model cannot
+    // leave, the honest answer for a scoped user is no answer.
+    if (req.scope && !req.scope.unrestricted) {
+        log.warn(`AI chat refused for scoped user ${userId}.`);
+        return res.status(403).json({
+            error:
+                'The AI assistant is only available to n8n owners and admins for now. ' +
+                'It queries the whole analytics database, and per-project answers are ' +
+                'not implemented yet.'
+        });
+    }
 
     if (!userMessage) return res.status(400).json({ error: "Message is required" });
     if (typeof userMessage !== 'string' || userMessage.length > 2000) {
@@ -79,7 +96,7 @@ exports.chat = async (req, res) => {
             }
             dbResult = await localDb.query(generatedSql);
         } catch (dbError) {
-            console.error("❌ SQL ERROR:", generatedSql, dbError);
+            log.error("❌ SQL ERROR:", generatedSql, dbError);
             return res.status(400).json({ error: "The AI generated an invalid SQL query.", details: dbError.message, sqlUsed: generatedSql });
         }
 
@@ -115,7 +132,7 @@ exports.chat = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("AI Pipeline Error:", error);
+        log.error("AI Pipeline Error:", error);
         res.status(500).json({ error: "AI communication failed." });
     }
 };
@@ -129,7 +146,7 @@ exports.getHistory = async (req, res) => {
         );
         res.json(historyRes.rows);
     } catch (error) {
-        console.error("History Fetch Error:", error);
+        log.error("History Fetch Error:", error);
         res.status(500).json({ error: "Failed to fetch chat history." });
     }
 };

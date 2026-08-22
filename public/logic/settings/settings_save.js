@@ -55,7 +55,13 @@
                     body: JSON.stringify({ key: 'timezone', value: tz })
                 });
                 
-                if (!res.ok) throw new Error("Failed to save preference");
+                // The server's own message, not a generic one. This endpoint is
+                // owner/admin only, and "Error saving preferences" would leave a
+                // member guessing at a permission problem.
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.error || 'Failed to save preference');
+                }
                 
                 savePrefsBtn.innerHTML = '<i class="fa-solid fa-check"></i> Saved';
                 savePrefsBtn.classList.replace('bg-indigo-600', 'bg-green-600');
@@ -67,7 +73,7 @@
                 }, 2000);
             } catch (err) {
                 console.error(err);
-                alert("Error saving preferences.");
+                alert(err.message || 'Error saving preferences.');
                 savePrefsBtn.disabled = false;
                 savePrefsBtn.innerHTML = '<i class="fa-solid fa-check"></i> Save Preferences';
             }

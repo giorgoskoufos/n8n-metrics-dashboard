@@ -32,6 +32,7 @@
 const os = require('os');
 const crypto = require('crypto');
 const localDb = require('./localDb');
+const log = require('../utils/logger').logger('LOCK');
 
 // Unique per process. Hostname and PID both repeat across containers (PID is
 // almost always 1 in Docker), so neither can identify an owner on its own —
@@ -117,13 +118,13 @@ async function acquireOrRenew() {
         const won = res.changes === 1;
 
         if (won && !holding) {
-            console.log(`[LOCK] ETL lock acquired by ${HOSTNAME}#${process.pid}.`);
+            log.info(`ETL lock acquired by ${HOSTNAME}#${process.pid}.`);
             lastDeclinedOwner = null;
         } else if (!won && holding) {
             // Only reachable if another process decided we were stale and took
             // over — worth shouting about, because it means this instance was
             // starved long enough to look dead.
-            console.warn('[LOCK] Lost the ETL lock to another instance.');
+            log.warn('Lost the ETL lock to another instance.');
         }
 
         holding = won;
@@ -136,7 +137,7 @@ async function acquireOrRenew() {
         // A failure is not proof that someone else owns it, but we must assume
         // the worst: writing without a confirmed lock is the exact scenario this
         // module exists to prevent.
-        console.error('[LOCK] Could not acquire or renew the ETL lock:', err.message);
+        log.error('Could not acquire or renew the ETL lock:', err.message);
         holding = false;
         return { won: false, failed: true, error: err };
     }
@@ -173,14 +174,14 @@ async function claimForEtl() {
     if (result.failed) {
         // The error itself was already logged with its real cause. Saying
         // "another instance holds the lock" here would invent one.
-        console.warn('[LOCK] ETL skipped — the lock could not be checked. Not syncing, to stay safe.');
+        log.warn('ETL skipped — the lock could not be checked. Not syncing, to stay safe.');
         return false;
     }
 
     const owner = await describeOwner();
     if (owner !== lastDeclinedOwner) {
-        console.warn(
-            `[LOCK] ETL skipped — another instance holds the lock: ${owner}. ` +
+        log.warn(
+            `ETL skipped — another instance holds the lock: ${owner}. ` +
             'This instance keeps serving reads. Ownership transfers automatically ' +
             `if that instance stops (within ${Math.round(TTL_MS / 1000)}s).`
         );
@@ -216,10 +217,10 @@ async function release() {
               WHERE id = 1 AND owner_id = ?`,
             [OWNER_ID]
         );
-        console.log('[LOCK] ETL lock released.');
+        log.info('ETL lock released.');
     } catch (err) {
         // Not fatal. The TTL is the backstop for exactly this case.
-        console.error('[LOCK] Could not release the ETL lock:', err.message);
+        log.error('Could not release the ETL lock:', err.message);
     }
 }
 

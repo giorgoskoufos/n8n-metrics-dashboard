@@ -1,4 +1,6 @@
 const jwt = require('jsonwebtoken');
+const { resolveScopeFor } = require('../utils/scope');
+const log = require('../utils/logger').logger('AUTH');
 const JWT_SECRET = process.env.DASHBOARD_JWT_SECRET;
 
 // Fail at boot rather than at the first login. A missing secret makes jwt.sign()
@@ -24,7 +26,12 @@ const authenticateToken = (req, res, next) => {
     if (!token) return res.status(401).json({ error: 'Authentication required (Missing Token)' });
 
     jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) return res.status(403).json({ error: 'Invalid or expired token' });
+        // 401, not 403. The two are not interchangeable to the frontend: guard.js
+        // treats "not authenticated" as a reason to clear the token and bounce to
+        // the login page, and "not permitted" as a message to show the user. While
+        // a bad token answered 403, every authorization refusal in the app logged
+        // the user out instead of telling them why.
+        if (err) return res.status(401).json({ error: 'Invalid or expired token' });
         req.user = user;
         next();
     });
@@ -49,10 +56,30 @@ const requireElevatedRole = (req, res, next) => {
     if (!role) return next();
     if (ELEVATED_ROLES.has(role)) return next();
 
-    console.warn(`[AUTH] Elevated action refused for role "${role}" (user ${req.user.id})`);
+    log.warn(`Elevated action refused for role "${role}" (user ${req.user.id})`);
     return res.status(403).json({
         error: 'Only n8n owners and admins can trigger this action.'
     });
 };
 
-module.exports = { authenticateToken, requireElevatedRole, JWT_SECRET };
+/**
+ * Attaches req.scope — which workflows this request may touch.
+ *
+ * A middleware rather than a call inside each controller, so a handler added
+ * later cannot forget to ask. Ordering matters: it reads req.user, so it must
+ * run after authenticateToken.
+ *
+ * The rules live in utils/scope.js; this only carries the answer onto the
+ * request and turns a lookup failure into a 500 instead of an unscoped read.
+ */
+const resolveScope = async (req, res, next) => {
+    try {
+        req.scope = await resolveScopeFor(req.user);
+        next();
+    } catch (err) {
+        log.error('Could not resolve access scope:', err.message);
+        res.status(500).json({ error: 'Could not determine access rights for this request.' });
+    }
+};
+
+module.exports = { authenticateToken, requireElevatedRole, resolveScope, JWT_SECRET };

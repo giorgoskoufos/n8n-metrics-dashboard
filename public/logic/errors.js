@@ -24,7 +24,11 @@ let categoryChart = null;
 let currentRange = { startDate: null, endDate: null };
 
 // ── Initialization ───────────────────────────────────────────
-function initErrorIntelligence() {
+async function initErrorIntelligence() {
+    // Every value this page renders is a timestamp, so the timezone has to be
+    // known before the first one is drawn — otherwise the page paints in the
+    // browser's zone and silently re-paints in the configured one.
+    await window.settingsReady;
     initCharts();
     setErrorRange(168); // Default: 7 days
 
@@ -126,10 +130,12 @@ function renderKPIs(summary) {
 function renderTrendChart(trendData) {
     if (!trendData || trendData.length === 0) return;
 
-    const labels = trendData.map(d => {
-        const date = new Date(d.day + 'T00:00:00');
-        return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    });
+    // The API returns date(timestamp), a bare YYYY-MM-DD in UTC. Appending only
+    // 'T00:00:00' made the browser read it as LOCAL midnight, so west of UTC every
+    // bar was labelled with the previous day.
+    const labels = trendData.map(d =>
+        window.formatTime(d.day + 'T00:00:00Z', { month: 'short', day: 'numeric' })
+    );
 
     const datasets = ALL_CATEGORIES.filter(cat => {
         return trendData.some(d => d[cat]);
@@ -432,10 +438,14 @@ function initCharts() {
 }
 
 // ── Helpers ──────────────────────────────────────────────────
+// Through the shared formatter, so this page honours the timezone setting like
+// the rest of the dashboard. It never did: formatTime lived in app_globals.js and
+// errors.html does not load app.js.
 function formatTimeNice(isoStr) {
     if (!isoStr) return '—';
-    const date = new Date(isoStr);
-    return date.toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+    return window.formatTime(isoStr, {
+        month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit'
+    });
 }
 
 // escapeHtml now lives in global_functions.js so every page shares one implementation.

@@ -14,37 +14,7 @@ window.isFetchingExecutions = false;
 window.lastRawConcurrency = []; // Cache for raw 5-minute points
 window.lastTopWorkflows = [];   // Cache for exec filter dropdown
 
-window.userSettings = { timezone: 'auto' };
-
-/**
- * Centrally formats any UTC string into the user's preferred timezone.
- */
-window.formatTime = (utcStr, options = {}) => {
-    if (!utcStr) return 'N/A';
-
-    // Ensure string is treated as UTC if it doesn't have an offset
-    const dateStr = (utcStr.endsWith('Z') || utcStr.includes('+')) ? utcStr : (utcStr + 'Z');
-    const date = new Date(dateStr);
-
-    // Default to 24-hour time to avoid 12/24 confusion
-    const baseOptions = {
-        timeZone: window.userSettings.timezone === 'auto' ? undefined : window.userSettings.timezone,
-        hour12: false,
-        hourCycle: 'h23',
-        ...options
-    };
-
-    return date.toLocaleString('en-US', baseOptions);
-};
-
-// Fetch settings once at boot
-window.initSettings = async function() {
-    try {
-        const res = await fetchWithAuth('/api/settings');
-        if (res.ok) {
-            window.userSettings = await res.json();
-            console.log("[SETTINGS] Timezone initialized:", window.userSettings.timezone || 'auto');
-        }
-    } catch (e) { }
-}
+// userSettings, formatTime and initSettings moved to global_functions.js in M-17.
+// They lived here, and app.js is not loaded by errors.html — so the timezone
+// setting had no effect on the one page made entirely of timestamps.
 

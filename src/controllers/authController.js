@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../config/db');
 const { JWT_SECRET } = require('../middlewares/auth');
+const log = require('../utils/logger').logger('AUTH');
 
 // Compared against when no user matches, so a missing account costs the same time
 // as a wrong password. Without it, response latency reveals which emails exist.
@@ -59,7 +60,7 @@ exports.login = async (req, res) => {
         // Deactivating a user in n8n must lock them out here too. Same generic
         // message as a bad password — a disabled account isn't owed an explanation.
         if (user.disabled === true) {
-            console.warn(`[AUTH] Login blocked for disabled n8n user: ${user.email}`);
+            log.warn(`Login blocked for disabled n8n user: ${user.email}`);
             return res.status(401).json({ error: 'Wrong Credentials' });
         }
 
@@ -67,7 +68,7 @@ exports.login = async (req, res) => {
         // second factor. Accepting it here would make this dashboard the weak door
         // into the same data. Only reached once the password is already verified.
         if (user.mfaEnabled === true) {
-            console.warn(`[AUTH] Login blocked for MFA-enabled n8n user: ${user.email}`);
+            log.warn(`Login blocked for MFA-enabled n8n user: ${user.email}`);
             return res.status(403).json({
                 error:
                     'This account has two-factor authentication enabled in n8n, which the dashboard ' +
@@ -103,7 +104,7 @@ exports.login = async (req, res) => {
         });
 
     } catch (err) {
-        console.error('Login Error:', err);
+        log.error('Login Error:', err);
         res.status(500).json({ error: 'Internal server error during login' });
     }
 };

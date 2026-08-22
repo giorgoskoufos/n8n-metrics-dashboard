@@ -26,18 +26,14 @@ if (!fs.existsSync(dbPath)) {
 }
 
 const db = new sqlite3.Database(dbPath, APPLY ? sqlite3.OPEN_READWRITE : sqlite3.OPEN_READONLY);
-const all = (sql, p = []) => new Promise((res, rej) => db.all(sql, p, (e, r) => (e ? rej(e) : res(r))));
-const run = (sql, p = []) => new Promise((res, rej) => db.run(sql, p, function (e) { e ? rej(e) : res(this); }));
+const all = (sql, p = []) => new Promise((res, rej) => { db.all(sql, p, (e, r) => (e ? rej(e) : res(r))); });
+const run = (sql, p = []) => new Promise((res, rej) => { db.run(sql, p, function (e) { if (e) rej(e); else res(this); }); });
 
-const INDEXES = [
-    'CREATE INDEX IF NOT EXISTS idx_exec_started ON execution_entity("startedAt")',
-    'CREATE INDEX IF NOT EXISTS idx_exec_wf_started ON execution_entity("workflowId", "startedAt")',
-    'CREATE INDEX IF NOT EXISTS idx_exec_status_started ON execution_entity(status, "startedAt")',
-    'CREATE INDEX IF NOT EXISTS idx_err_ts ON execution_error_analytics(timestamp)',
-    'CREATE INDEX IF NOT EXISTS idx_err_wf_ts ON execution_error_analytics(workflow_id, timestamp)',
-    'CREATE INDEX IF NOT EXISTS idx_err_cat_node ON execution_error_analytics(error_category, node_name)',
-    'CREATE INDEX IF NOT EXISTS idx_chat_user_created ON dashboard_chat_history(user_id, created_at)'
-];
+// Derived from the migrations rather than restated. This list used to be a
+// second, hand-maintained copy and had fallen five indexes behind the app —
+// so the script whose whole purpose is "ship a replica that is already
+// optimised" was shipping one that was not.
+const { INDEX_STATEMENTS: INDEXES } = require('../config/schema');
 
 const step = (n, msg) => console.log(`\n[${n}] ${msg}`);
 

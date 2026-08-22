@@ -38,8 +38,8 @@ if (!fs.existsSync(dbPath)) {
 }
 
 const db = new sqlite3.Database(dbPath, APPLY ? sqlite3.OPEN_READWRITE : sqlite3.OPEN_READONLY);
-const all = (sql, p = []) => new Promise((res, rej) => db.all(sql, p, (e, r) => (e ? rej(e) : res(r))));
-const run = (sql, p = []) => new Promise((res, rej) => db.run(sql, p, function (e) { e ? rej(e) : res(this); }));
+const all = (sql, p = []) => new Promise((res, rej) => { db.all(sql, p, (e, r) => (e ? rej(e) : res(r))); });
+const run = (sql, p = []) => new Promise((res, rej) => { db.run(sql, p, function (e) { if (e) rej(e); else res(this); }); });
 
 const truncate = (s, n = 90) => {
     if (s === null || s === undefined) return String(s);

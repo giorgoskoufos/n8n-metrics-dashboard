@@ -2,6 +2,8 @@ const { pool } = require('../config/db');
 const localDb = require('../config/localDb');
 const { parse } = require('flatted');
 const { parseIsoDate, parseDateRange, validateSetting, validateRoiEntry } = require('../utils/validate');
+const { scopeClause, canSeeWorkflow, filterVisibleWorkflows } = require('../utils/scope');
+const log = require('../utils/logger').logger('API');
 
 /**
  * Relative time bounds are computed here rather than with SQLite's
@@ -20,7 +22,7 @@ exports.getMetrics = async (req, res) => {
         if (!range.ok) return res.status(400).json({ error: range.error });
 
         let startIso, endIso, prevStartIso, prevEndIso;
-        let isCustom = true;
+        const isCustom = true;
         let bucketUnit = 'hour';
         let durationMs;
 
@@ -60,10 +62,14 @@ exports.getMetrics = async (req, res) => {
         const wfJoinClause = targetWorkflow ? 'JOIN workflow_entity w ON e."workflowId" = w.id' : '';
         const wfParam = targetWorkflow ? [targetWorkflow] : [];
 
+        // Appended last in every WHERE below, so its parameter is always last too.
+        const scope = scopeClause(req.scope, 'e."workflowId"');
+
         // Order matters: the date bounds appear in the WHERE clause before the
-        // optional workflow filter that wfFilterClause appends after them.
-        const currentParams = [startIso, endIso, ...wfParam];
-        const prevParams = [prevStartIso, prevEndIso, ...wfParam];
+        // optional workflow filter that wfFilterClause appends after them, and
+        // the scope filter after that.
+        const currentParams = [startIso, endIso, ...wfParam, ...scope.params];
+        const prevParams = [prevStartIso, prevEndIso, ...wfParam, ...scope.params];
 
         const statsQuery = `
             SELECT COUNT(*) as total,
@@ -72,7 +78,7 @@ exports.getMetrics = async (req, res) => {
             FROM execution_entity e
             ${wfJoinClause}
             WHERE e."startedAt" >= ? AND e."startedAt" <= ?
-            ${wfFilterClause};
+            ${wfFilterClause}${scope.sql};
         `;
 
         const prevStatsQuery = `
@@ -81,7 +87,7 @@ exports.getMetrics = async (req, res) => {
             FROM execution_entity e
             ${wfJoinClause}
             WHERE e."startedAt" >= ? AND e."startedAt" < ?
-            ${wfFilterClause};
+            ${wfFilterClause}${scope.sql};
         `;
 
         const topWorkflowsQuery = `
@@ -90,7 +96,7 @@ exports.getMetrics = async (req, res) => {
             FROM execution_entity e
             JOIN workflow_entity w ON e."workflowId" = w.id
             WHERE e."startedAt" >= ? AND e."startedAt" <= ?
-            ${wfFilterClause}
+            ${wfFilterClause}${scope.sql}
             GROUP BY w.id, w.name
             ORDER BY execution_count DESC;
         `;
@@ -119,7 +125,7 @@ exports.getMetrics = async (req, res) => {
             FROM execution_entity e
             ${wfJoinClause}
             WHERE e."startedAt" >= ? AND e."startedAt" <= ?
-            ${wfFilterClause}
+            ${wfFilterClause}${scope.sql}
             GROUP BY bucket_idx
         `;
 
@@ -127,7 +133,7 @@ exports.getMetrics = async (req, res) => {
             localDb.query(statsQuery, currentParams),
             localDb.query(prevStatsQuery, prevParams),
             localDb.query(bucketQuery, [
-                startPoint.toISOString(), stepMs / 1000, startIso, endIso, ...wfParam
+                startPoint.toISOString(), stepMs / 1000, startIso, endIso, ...wfParam, ...scope.params
             ]),
             localDb.query(topWorkflowsQuery, currentParams)
         ]);
@@ -196,7 +202,7 @@ exports.getMetrics = async (req, res) => {
             topWorkflows: topWorkflows.rows 
         });
     } catch (err) {
-        console.error(err);
+        log.error(err);
         res.status(500).json({ error: 'Database errorfetching metrics' });
     }
 };
@@ -245,6 +251,14 @@ exports.getExecutions = async (req, res) => {
         params.push(parseFloat(minDuration));
     }
 
+    // Last condition, so its parameter sits after every filter above and before
+    // the LIMIT/OFFSET pair appended at execution time.
+    const scope = scopeClause(req.scope, 'e."workflowId"');
+    if (scope.condition) {
+        conditions.push(scope.condition);
+        params.push(...scope.params);
+    }
+
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     try {
@@ -260,13 +274,14 @@ exports.getExecutions = async (req, res) => {
         const result = await localDb.query(query, [...params, limit, offset]);
         res.json(result.rows);
     } catch (err) {
-        console.error(err);
+        log.error(err);
         res.status(500).json({ error: 'Database error' });
     }
 };
 
 exports.getSlowest = async (req, res) => {
     try {
+        const scope = scopeClause(req.scope, 'e."workflowId"');
         const query = `
             SELECT w.name, 
                    AVG((julianday(e."stoppedAt") - julianday(e."startedAt")) * 86400) as avg_duration,
@@ -274,37 +289,38 @@ exports.getSlowest = async (req, res) => {
             FROM execution_entity e
             JOIN workflow_entity w ON e."workflowId" = w.id
             WHERE e."startedAt" > ?
-              AND e."stoppedAt" IS NOT NULL
+              AND e."stoppedAt" IS NOT NULL${scope.sql}
             GROUP BY w.id, w.name
             ORDER BY avg_duration DESC
             LIMIT 10;
         `;
-        const result = await localDb.query(query, [isoDaysAgo(7)]);
+        const result = await localDb.query(query, [isoDaysAgo(7), ...scope.params]);
         res.json(result.rows);
     } catch (err) {
-        console.error(err);
+        log.error(err);
         res.status(500).json({ error: 'Database error' });
     }
 };
 
 exports.getErrors = async (req, res) => {
     try {
+        const scope = scopeClause(req.scope, 'e."workflowId"');
         const query = `
             SELECT w.name, 
                    SUM(CASE WHEN e.status = 'error' THEN 1 ELSE 0 END) as error_count,
                    COUNT(e.id) as total_runs
             FROM execution_entity e
             JOIN workflow_entity w ON e."workflowId" = w.id
-            WHERE e."startedAt" > ?
+            WHERE e."startedAt" > ?${scope.sql}
             GROUP BY w.id, w.name
             HAVING SUM(CASE WHEN e.status = 'error' THEN 1 ELSE 0 END) > 0
             ORDER BY error_count DESC
             LIMIT 10;
         `;
-        const result = await localDb.query(query, [isoDaysAgo(7)]);
+        const result = await localDb.query(query, [isoDaysAgo(7), ...scope.params]);
         res.json(result.rows);
     } catch (err) {
-        console.error(err);
+        log.error(err);
         res.status(500).json({ error: 'Database error' });
     }
 };
@@ -324,8 +340,21 @@ exports.getExecutionError = async (req, res) => {
             return res.status(404).json({ error: 'No data found' });
         }
 
+        const workflowId = result.rows[0].workflow_id;
+
+        // Addressed by execution id, so nothing above narrowed it to this user's
+        // workflows — the check has to happen here or any authenticated user can
+        // read any execution's full payload by guessing an integer. 404 rather
+        // than 403: whether the execution exists is itself not their business.
+        if (!(await canSeeWorkflow(req.scope, workflowId))) {
+            log.warn(
+                `User ${req.user && req.user.id} was refused execution ` +
+                `${req.params.id} (workflow ${workflowId}).`
+            );
+            return res.status(404).json({ error: 'No data found' });
+        }
+
         const fullData = parse(result.rows[0].data);
-        const workflowId = result.rows[0].workflow_id; 
         
         let errorMessage = "Unknown error detail";
         let nodeName = "Unknown Node";
@@ -361,14 +390,14 @@ exports.getExecutionError = async (req, res) => {
 
         res.json(payload);
     } catch (err) {
-        console.error('Parsing Error:', err);
+        log.error('Parsing Error:', err);
         res.status(500).json({ error: 'Failed to parse error data' });
     }
 };
 
 exports.forceSync = async (req, res) => {
     const { syncData } = require('../config/syncJob');
-    console.log(`[SYNC] Manual sync requested by user ${req.user && req.user.id}`);
+    log.info(`Manual sync requested by user ${req.user && req.user.id}`);
     try {
         const result = await syncData();
 
@@ -404,7 +433,7 @@ exports.forceSync = async (req, res) => {
             errors: result.errors
         });
     } catch (err) {
-        console.error('[ERROR] Manual Sync failed:', err);
+        log.error('Manual Sync failed:', err);
         res.status(500).json({ error: 'Force Sync Failed' });
     }
 };
@@ -439,6 +468,7 @@ exports.getN8nHealth = async (req, res) => {
 
 exports.getSettings = async (req, res) => {
     try {
+        const scope = scopeClause(req.scope, 'w.id');
         const query = `
             SELECT 
                 w.id, 
@@ -450,15 +480,16 @@ exports.getSettings = async (req, res) => {
             FROM workflow_entity w
             LEFT JOIN workflow_settings s ON w.id = s.workflow_id
             LEFT JOIN execution_entity e ON w.id = e."workflowId" AND e.status = 'success'
+            ${scope.condition ? `WHERE ${scope.condition}` : ''}
             GROUP BY w.id, w.name, s.saved_time_seconds, s.hourly_rate
             ORDER BY w.name ASC
         `;
         // The previous bound mixed 'localtime' into a comparison against UTC
         // timestamps, so the 30-day window was off by the server's UTC offset.
-        const result = await localDb.query(query, [isoDaysAgo(30)]);
+        const result = await localDb.query(query, [isoDaysAgo(30), ...scope.params]);
         res.json(result.rows);
     } catch (err) {
-        console.error(err);
+        log.error(err);
         res.status(500).json({ error: 'Database error fetching settings' });
     }
 };
@@ -477,9 +508,15 @@ exports.updateSettings = async (req, res) => {
         clean.push(check.value);
     }
 
-    // workflow_settings has a foreign key to workflow_entity, but it only bites
-    // if PRAGMA foreign_keys is on — which it is, and this turns the resulting
-    // 500 into a message that names the offending workflow.
+    // Two checks in one pass. workflow_settings has a foreign key to
+    // workflow_entity, but it only bites if PRAGMA foreign_keys is on — which it
+    // is, and this turns the resulting 500 into a message that names the offending
+    // workflow. The scope check is the other half: ROI is written per workflow, so
+    // without it a member could set the saved-time figure on somebody else's.
+    //
+    // Out of scope and non-existent return the SAME message on purpose. Telling
+    // the caller which of the two it was would turn this endpoint into a way to
+    // enumerate the workflow ids of every other project.
     const ids = clean.map(c => c.workflow_id);
     if (ids.length > 0) {
         const known = await localDb.query(
@@ -487,10 +524,11 @@ exports.updateSettings = async (req, res) => {
             ids
         );
         const knownSet = new Set(known.rows.map(r => r.id));
-        const unknown = ids.filter(id => !knownSet.has(id));
-        if (unknown.length > 0) {
+        const visibleSet = await filterVisibleWorkflows(req.scope, ids);
+        const rejected = ids.filter(id => !knownSet.has(id) || !visibleSet.has(id));
+        if (rejected.length > 0) {
             return res.status(400).json({
-                error: `Unknown workflow id(s): ${unknown.slice(0, 5).join(', ')}`
+                error: `Unknown workflow id(s): ${rejected.slice(0, 5).join(', ')}`
             });
         }
     }
@@ -508,8 +546,8 @@ exports.updateSettings = async (req, res) => {
         await localDb.execute('COMMIT');
         res.json({ message: 'Settings saved' });
     } catch (err) {
-        try { await localDb.execute('ROLLBACK'); } catch(e){}
-        console.error(err);
+        try { await localDb.execute('ROLLBACK'); } catch (e) { /* the caught error above is the one worth reporting */ }
+        log.error(err);
         res.status(500).json({ error: 'Failed to update settings' });
     }
 };
@@ -527,6 +565,9 @@ exports.getRoiMetrics = async (req, res) => {
             timeParams.push(isoHoursAgo(lookbackHours));
         }
 
+        const scope = scopeClause(req.scope, 'e."workflowId"');
+        const roiParams = [...timeParams, ...scope.params];
+
         const totalQuery = `
             SELECT 
                 COUNT(e.id) as total_executions,
@@ -535,7 +576,7 @@ exports.getRoiMetrics = async (req, res) => {
             FROM execution_entity e
             JOIN workflow_entity w ON e."workflowId" = w.id
             LEFT JOIN workflow_settings s ON w.id = s.workflow_id
-            WHERE e.status = 'success'${timeFilter}
+            WHERE e.status = 'success'${timeFilter}${scope.sql}
         `;
         
         const workflowsQuery = `
@@ -547,15 +588,15 @@ exports.getRoiMetrics = async (req, res) => {
             FROM execution_entity e
             JOIN workflow_entity w ON e."workflowId" = w.id
             LEFT JOIN workflow_settings s ON w.id = s.workflow_id
-            WHERE e.status = 'success'${timeFilter}
+            WHERE e.status = 'success'${timeFilter}${scope.sql}
             GROUP BY w.id, w.name, s.saved_time_seconds, s.hourly_rate
             HAVING time_saved_seconds > 0
             ORDER BY time_saved_seconds DESC
         `;
         
         const [totalStats, wfStats] = await Promise.all([
-            localDb.query(totalQuery, timeParams),
-            localDb.query(workflowsQuery, timeParams)
+            localDb.query(totalQuery, roiParams),
+            localDb.query(workflowsQuery, roiParams)
         ]);
 
         res.json({
@@ -564,79 +605,97 @@ exports.getRoiMetrics = async (req, res) => {
         });
 
     } catch (err) {
-        console.error(err);
+        log.error(err);
         res.status(500).json({ error: 'Database error fetching ROI metrics' });
     }
 };
 
-exports.getConcurrencyData = async (req, res) => {
+/**
+ * A dense 288-bucket series of execution STARTS, counted in SQL.
+ *
+ * One helper for both callers below, and for the ETL's own version of the same
+ * arithmetic, so a scoped user, an unscoped user and the cached series all land
+ * their counts on exactly the same five-minute grid. Empty buckets are present
+ * as zero rather than omitted — a sparse result would let the chart close the
+ * gaps and draw a quiet night as a straight line between two busy hours.
+ */
+async function volumeSeries(scope, originMs, buckets = 288) {
+    const STEP_MS = 5 * 60 * 1000;
+    const originIso = new Date(originMs).toISOString();
+    const endIso = new Date(originMs + buckets * STEP_MS).toISOString();
+    const scoped = scope || { sql: '', params: [] };
+
+    const rows = await localDb.query(
+        `SELECT CAST((julianday("startedAt") - julianday(?)) * 86400.0 / 300 AS INTEGER) AS bucket_idx,
+                COUNT(*) AS started_count
+           FROM execution_entity
+          WHERE "startedAt" >= ? AND "startedAt" < ?${scoped.sql}
+          GROUP BY bucket_idx`,
+        [originIso, originIso, endIso, ...scoped.params]
+    );
+
+    const byIndex = new Map(rows.rows.map(r => [r.bucket_idx, r.started_count]));
+    const series = [];
+    for (let i = 0; i < buckets; i++) {
+        series.push({
+            timestamp: new Date(originMs + i * STEP_MS).toISOString(),
+            started_count: byIndex.get(i) || 0
+        });
+    }
+    return series;
+}
+
+exports.getExecutionVolume = async (req, res) => {
     try {
         const { start, end } = req.query;
+        const STEP_MS = 5 * 60 * 1000;
+        const scope = scopeClause(req.scope, '"workflowId"');
 
-        // Default behavior: Rolling 24 hours from cache
+        // Default: the rolling 24 hours.
         if (!start || !end) {
-            const query = `
-                SELECT timestamp, active_count 
-                FROM concurrency_stats 
-                ORDER BY timestamp ASC 
+            // execution_volume_stats is a single instance-wide series written by
+            // the ETL — there is no per-project version of it to read, and handing
+            // a scoped user the global counts would leak the shape of every other
+            // project's traffic. For them the same buckets are computed live; it
+            // is one indexed range scan over their own workflows.
+            if (scope.condition) {
+                const newest = Math.floor(Date.now() / STEP_MS) * STEP_MS;
+                return res.json(await volumeSeries(scope, newest - 287 * STEP_MS));
+            }
+            const result = await localDb.query(`
+                SELECT timestamp, started_count
+                FROM execution_volume_stats
+                ORDER BY timestamp ASC
                 LIMIT 1000
-            `;
-            const result = await localDb.query(query);
+            `);
             return res.json(result.rows);
         }
 
-        // Specific Date behavior: Calculate 288 buckets locally
+        // A specific day: the same 288 buckets, anchored at the requested start.
         const range = parseDateRange(start, end);
         if (!range.ok) return res.status(400).json({ error: range.error });
 
-        const startTimeMs = range.start.getTime();
-        const endTimeMs = range.end.getTime();
-
-        // Fetch executions started within this entire day window
-        const query = `
-            SELECT "startedAt"
-            FROM execution_entity
-            WHERE "startedAt" >= ?
-              AND "startedAt" <= ?
-        `;
-        const execs = await localDb.query(query, [range.start.toISOString(), range.end.toISOString()]);
-
-        const execData = execs.rows.map(e => ({
-            sAt: new Date(e.startedAt + (e.startedAt.endsWith('Z') ? '' : 'Z')).getTime()
-        }));
-
-        const buckets = [];
-        // Generate 288 5-minute buckets starting from 00:00 local of that day
-        for (let i = 0; i < 288; i++) {
-            const bTimeMs = startTimeMs + (i * 5 * 60 * 1000);
-            buckets.push(new Date(bTimeMs).toISOString());
-        }
-
-        const stats = buckets.map(bTime => {
-            const bDateMs = new Date(bTime).getTime();
-            const nextBDateMs = bDateMs + (5 * 60 * 1000);
-            
-            const count = execData.filter(e => {
-                return e.sAt >= bDateMs && e.sAt < nextBDateMs;
-            }).length;
-            
-            return { timestamp: bTime, active_count: count };
-        });
-
-        res.json(stats);
+        // Counted in SQL like every other path. This used to read every execution
+        // of the day into memory and then run a filter over the whole array once
+        // per bucket — 288 passes to produce 288 numbers.
+        res.json(await volumeSeries(scope, range.start.getTime()));
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Failed to fetch concurrency' });
+        log.error(err);
+        res.status(500).json({ error: 'Failed to fetch execution volume' });
     }
 };
 
 exports.getFirstExecutionDate = async (req, res) => {
     try {
-        const query = 'SELECT MIN("startedAt") as first_date FROM execution_entity';
-        const result = await localDb.query(query);
+        const scope = scopeClause(req.scope, '"workflowId"');
+        // No WHERE of its own, so the scope condition has to open one.
+        const query =
+            'SELECT MIN("startedAt") as first_date FROM execution_entity' +
+            (scope.condition ? ` WHERE ${scope.condition}` : '');
+        const result = await localDb.query(query, scope.params);
         res.json({ firstDate: result.rows[0]?.first_date || null });
     } catch (err) {
-        console.error(err);
+        log.error(err);
         res.status(500).json({ error: 'Failed to fetch first execution date' });
     }
 };
@@ -651,7 +710,7 @@ exports.getGlobalSettings = async (req, res) => {
         }, {});
         res.json(settings);
     } catch (err) {
-        console.error(err);
+        log.error(err);
         res.status(500).json({ error: 'Failed to fetch settings' });
     }
 };
@@ -669,12 +728,26 @@ exports.updateGlobalSettings = async (req, res) => {
         );
         res.json({ message: 'Setting updated' });
     } catch (err) {
-        console.error(err);
+        log.error(err);
         res.status(500).json({ error: 'Failed to update setting' });
     }
 };
 
-exports.getConcurrencyDetails = async (req, res) => {
+/**
+ * The rows behind one bar of the execution-volume chart.
+ *
+ * Executions that STARTED inside the window — the same measurement the bar is.
+ * It used to select executions that were RUNNING during the window: started at
+ * or before the end, and either still going or stopped after the beginning. That
+ * is overlap, not volume, so clicking a bar of height 12 could open a list of 30
+ * rows or of 3, and neither number was wrong — they were answers to different
+ * questions. The modal's own subtitle already said "Workflows started in this
+ * window"; the query was the part that disagreed.
+ *
+ * As a side effect the predicate is now a plain range on "startedAt", so it is
+ * one seek on idx_exec_started instead of a scan with an OR in it.
+ */
+exports.getExecutionVolumeDetails = async (req, res) => {
     const { time, window: windowMins } = req.query; // time is UTC ISO
     if (!time) return res.status(400).json({ error: 'time parameter is required' });
 
@@ -685,29 +758,26 @@ exports.getConcurrencyDetails = async (req, res) => {
     if (!windowStart) {
         return res.status(400).json({ error: 'time must be a valid ISO date' });
     }
-    const windowStartMs = windowStart.getTime();
-    // The window end used to be computed inside SQL with a datetime() modifier,
-    // which forced a scan. Computing it here keeps the indexed column bare.
-    const windowEndIso = new Date(windowStartMs + span * 60000).toISOString();
+    // Bounds computed here rather than with a datetime() modifier in SQL, which
+    // would wrap the indexed column and force a scan.
+    const windowStartIso = windowStart.toISOString();
+    const windowEndIso = new Date(windowStart.getTime() + span * 60000).toISOString();
 
     try {
+        const scope = scopeClause(req.scope, 'e."workflowId"');
         const query = `
             SELECT w.name as workflow_name, w.id as workflow_id, e.id as exec_id, e.status, e."startedAt", e."stoppedAt",
                    (julianday(IFNULL(e."stoppedAt", ?)) - julianday(e."startedAt")) * 86400 as current_duration
             FROM execution_entity e
             JOIN workflow_entity w ON e."workflowId" = w.id
-            WHERE e."startedAt" <= ?
-              AND (
-                  e."stoppedAt" >= ? OR
-                  (e.status = 'running' AND e."startedAt" > ?)
-              )
+            WHERE e."startedAt" >= ? AND e."startedAt" < ?${scope.sql}
             ORDER BY e."startedAt" DESC
             LIMIT 50
         `;
         const result = await localDb.query(query, [
-            new Date().toISOString(), windowEndIso, time, isoHoursAgo(6)
+            new Date().toISOString(), windowStartIso, windowEndIso, ...scope.params
         ]);
-        
+
         const finalUrl = process.env.N8N_EDITOR_BASE_URL || '';
         const mappedRows = result.rows.map(row => ({
             ...row,
@@ -716,8 +786,8 @@ exports.getConcurrencyDetails = async (req, res) => {
 
         res.json(mappedRows);
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Failed to fetch concurrency details' });
+        log.error(err);
+        res.status(500).json({ error: 'Failed to fetch execution volume details' });
     }
 };
 
@@ -726,7 +796,7 @@ exports.getErrorIntelligence = async (req, res) => {
         const range = parseDateRange(req.query.startDate, req.query.endDate);
         if (!range.ok) return res.status(400).json({ error: range.error });
 
-        let startIso, endIso, prevStartIso, prevEndIso;
+        let startIso, endIso;
 
         if (range.start && range.end) {
             startIso = range.start.toISOString();
@@ -738,8 +808,14 @@ exports.getErrorIntelligence = async (req, res) => {
         }
 
         const durationMs = new Date(endIso).getTime() - new Date(startIso).getTime();
-        prevEndIso = startIso;
-        prevStartIso = new Date(new Date(startIso).getTime() - durationMs).toISOString();
+        const prevEndIso = startIso;
+        const prevStartIso = new Date(new Date(startIso).getTime() - durationMs).toISOString();
+
+        // Three different tables key the same thing under three different names.
+        const aScope = scopeClause(req.scope, 'workflow_id');        // analytics, unaliased
+        const aaScope = scopeClause(req.scope, 'a.workflow_id');     // analytics, aliased
+        const eScope = scopeClause(req.scope, '"workflowId"');       // executions, unaliased
+        const weScope = scopeClause(req.scope, 'w.id');              // workflows, aliased
 
         // 1. Summary Stats
         const summaryQuery = `
@@ -750,27 +826,27 @@ exports.getErrorIntelligence = async (req, res) => {
                 SUM(CASE WHEN error_category IN ('rate_limit','network','upstream') THEN 1 ELSE 0 END) as transient_count,
                 SUM(CASE WHEN error_category IN ('auth','config','data','logic') THEN 1 ELSE 0 END) as structural_count
             FROM execution_error_analytics
-            WHERE timestamp >= ? AND timestamp <= ?
+            WHERE timestamp >= ? AND timestamp <= ?${aScope.sql}
         `;
 
         const prevSummaryQuery = `
             SELECT COUNT(*) as total_errors
             FROM execution_error_analytics
-            WHERE timestamp >= ? AND timestamp < ?
+            WHERE timestamp >= ? AND timestamp < ?${aScope.sql}
         `;
 
         // Total executions for error rate calculation
         const execCountQuery = `
             SELECT COUNT(*) as total
             FROM execution_entity
-            WHERE "startedAt" >= ? AND "startedAt" <= ?
+            WHERE "startedAt" >= ? AND "startedAt" <= ?${eScope.sql}
         `;
 
         // 2. Category Breakdown
         const categoryQuery = `
             SELECT error_category, COUNT(*) as count
             FROM execution_error_analytics
-            WHERE timestamp >= ? AND timestamp <= ?
+            WHERE timestamp >= ? AND timestamp <= ?${aScope.sql}
             GROUP BY error_category
             ORDER BY count DESC
         `;
@@ -779,7 +855,7 @@ exports.getErrorIntelligence = async (req, res) => {
         const trendQuery = `
             SELECT date(timestamp) as day, error_category, COUNT(*) as count
             FROM execution_error_analytics
-            WHERE timestamp >= ? AND timestamp <= ?
+            WHERE timestamp >= ? AND timestamp <= ?${aScope.sql}
             GROUP BY date(timestamp), error_category
             ORDER BY day ASC
         `;
@@ -793,7 +869,7 @@ exports.getErrorIntelligence = async (req, res) => {
                 ROUND((1.0 - (CAST(COUNT(CASE WHEN e.status = 'error' THEN 1 END) AS REAL) / NULLIF(COUNT(e.id), 0))) * 100, 1) as health_score
             FROM workflow_entity w
             JOIN execution_entity e ON w.id = e."workflowId"
-            WHERE e."startedAt" >= ? AND e."startedAt" <= ?
+            WHERE e."startedAt" >= ? AND e."startedAt" <= ?${weScope.sql}
             GROUP BY w.id, w.name
             HAVING COUNT(CASE WHEN e.status = 'error' THEN 1 END) > 0
             ORDER BY health_score ASC
@@ -814,20 +890,20 @@ exports.getErrorIntelligence = async (req, res) => {
                 GROUP_CONCAT(DISTINCT w.name) as workflow_names
             FROM execution_error_analytics a
             JOIN workflow_entity w ON a.workflow_id = w.id
-            WHERE a.timestamp >= ? AND a.timestamp <= ?
+            WHERE a.timestamp >= ? AND a.timestamp <= ?${aaScope.sql}
             GROUP BY a.error_category, a.node_name, SUBSTR(a.error_message, 1, 200)
             ORDER BY count DESC
             LIMIT 50
         `;
 
         const [summary, prevSummary, execCount, categories, trend, health, groups] = await Promise.all([
-            localDb.query(summaryQuery, [startIso, endIso]),
-            localDb.query(prevSummaryQuery, [prevStartIso, prevEndIso]),
-            localDb.query(execCountQuery, [startIso, endIso]),
-            localDb.query(categoryQuery, [startIso, endIso]),
-            localDb.query(trendQuery, [startIso, endIso]),
-            localDb.query(healthQuery, [startIso, endIso]),
-            localDb.query(groupsQuery, [startIso, endIso])
+            localDb.query(summaryQuery, [startIso, endIso, ...aScope.params]),
+            localDb.query(prevSummaryQuery, [prevStartIso, prevEndIso, ...aScope.params]),
+            localDb.query(execCountQuery, [startIso, endIso, ...eScope.params]),
+            localDb.query(categoryQuery, [startIso, endIso, ...aScope.params]),
+            localDb.query(trendQuery, [startIso, endIso, ...aScope.params]),
+            localDb.query(healthQuery, [startIso, endIso, ...weScope.params]),
+            localDb.query(groupsQuery, [startIso, endIso, ...aaScope.params])
         ]);
 
         const totalErrors = summary.rows[0].total_errors || 0;
@@ -871,7 +947,7 @@ exports.getErrorIntelligence = async (req, res) => {
         });
 
     } catch (err) {
-        console.error('[BACKEND] Error Analytics Intelligence Failed:', err);
+        log.error('Error Analytics Intelligence Failed:', err);
         res.status(500).json({ error: 'Failed to aggregate error intelligence' });
     }
 };
@@ -880,6 +956,14 @@ exports.getWorkflowErrorDrilldown = async (req, res) => {
     try {
         const { id } = req.params;
         if (!id) return res.status(400).json({ error: 'Workflow ID is required' });
+
+        // Addressed by workflow id. Same reasoning as getExecutionError: the 404
+        // below already exists for a workflow that is not there, so an invisible
+        // one takes the identical answer and reveals nothing.
+        if (!(await canSeeWorkflow(req.scope, id))) {
+            log.warn(`User ${req.user && req.user.id} was refused workflow ${id}.`);
+            return res.status(404).json({ error: 'Workflow not found' });
+        }
 
         // 1. Node Breakdown (Pie Chart)
         const distributionQuery = `
@@ -931,7 +1015,7 @@ exports.getWorkflowErrorDrilldown = async (req, res) => {
         });
 
     } catch (err) {
-        console.error('[BACKEND] Workflow Drilldown Failed:', err);
+        log.error('Workflow Drilldown Failed:', err);
         res.status(500).json({ error: 'Failed to fetch workflow drilldown data' });
     }
 };
@@ -949,6 +1033,7 @@ exports.getErrorGroupExecutions = async (req, res) => {
         const range = parseDateRange(startDate, endDate);
         if (!range.ok) return res.status(400).json({ error: range.error });
 
+        const scope = scopeClause(req.scope, 'a.workflow_id');
         const query = `
             SELECT a.id as exec_id, a.timestamp, w.name as workflow_name
             FROM execution_error_analytics a
@@ -956,17 +1041,18 @@ exports.getErrorGroupExecutions = async (req, res) => {
             WHERE a.timestamp >= ? AND a.timestamp <= ?
               AND a.error_category = ?
               AND a.node_name = ?
-              AND SUBSTR(a.error_message, 1, 200) = ?
+              AND SUBSTR(a.error_message, 1, 200) = ?${scope.sql}
             ORDER BY a.timestamp DESC
             LIMIT 30
         `;
         
         const result = await localDb.query(query, [
-            range.start.toISOString(), range.end.toISOString(), category, nodeName, summary
+            range.start.toISOString(), range.end.toISOString(), category, nodeName, summary,
+            ...scope.params
         ]);
         res.json({ executions: result.rows });
     } catch (err) {
-        console.error('[BACKEND] Error fetching group executions:', err);
+        log.error('Error fetching group executions:', err);
         res.status(500).json({ error: 'Failed to fetch group executions' });
     }
 };

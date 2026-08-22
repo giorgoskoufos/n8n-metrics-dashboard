@@ -74,11 +74,13 @@ window.updateLineChart = function(chartData) {
 
     window.lineChart.options.scales.x.ticks.maxTicksLimit = 8;
     window.lineChart.options.scales.x.ticks.callback = function (value, index, values) {
-        const date = new Date(this.getLabelForValue(value));
-        if (durationDays > 2.1) {
-            return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-        }
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        // Through formatTime like every other timestamp: these labels are UTC
+        // bucket boundaries, and reading them in the browser's zone put the axis
+        // out of step with the table underneath it.
+        const label = this.getLabelForValue(value);
+        return durationDays > 2.1
+            ? window.formatTime(label, { month: 'short', day: 'numeric' })
+            : window.formatTime(label, { hour: '2-digit', minute: '2-digit' });
     };
 
     window.lineChart.data.labels = labels;
@@ -168,7 +170,7 @@ window.updateConcurrencyChart = function(data) {
             const bucketStart = new Date(d.timestamp);
             if (bucketStart.getTime() + intervalMs <= now.getTime()) {
                 processedLabels.push(d.timestamp);
-                processedData.push(d.active_count);
+                processedData.push(d.started_count);
             }
         });
     } else {
@@ -181,7 +183,7 @@ window.updateConcurrencyChart = function(data) {
             const bucketStart = new Date(block[0].timestamp);
             // Hide if the entire block hasn't passed yet
             if (bucketStart.getTime() + intervalMs <= now.getTime()) {
-                const sum = block.reduce((acc, b) => acc + (parseInt(b.active_count) || 0), 0);
+                const sum = block.reduce((acc, b) => acc + (parseInt(b.started_count) || 0), 0);
                 processedLabels.push(block[0].timestamp);
                 processedData.push(sum);
             }
@@ -217,7 +219,7 @@ window.fetchConcurrencyDetails = async function(timestamp, windowSize = 5) {
     setTimeout(() => document.getElementById('detailsModalContainer').classList.remove('scale-95'), 10);
 
     try {
-        const response = await fetchWithAuth(`/api/analytics/concurrency/details?time=${encodeURIComponent(timestamp)}&window=${windowSize}`);
+        const response = await fetchWithAuth(`/api/analytics/execution-volume/details?time=${encodeURIComponent(timestamp)}&window=${windowSize}`);
         const data = await response.json();
 
         if (data.length === 0) {
